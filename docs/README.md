@@ -1,6 +1,8 @@
 # DuckDB Inflector Extension by [Query.Farm](https://query.farm)
 
-The **Inflector** extension, developed by **[Query.Farm](https://query.farm)**, brings string case transformation and inflection capabilities directly to your SQL queries in DuckDB. Effortlessly convert, check, and manipulate string case styles, pluralization, and more—right inside your database.
+The **Inflector** extension, developed by **[Query.Farm](https://query.farm)**, brings powerful string case transformation and inflection capabilities directly to your SQL queries in DuckDB. Transform column names, validate naming conventions, handle pluralization, and more—all without leaving your database environment.
+
+Whether you're normalizing API responses, migrating schemas between naming conventions, or ensuring consistent data formatting, Inflector makes string manipulation in SQL simple and efficient.
 
 ## Use Cases
 
@@ -22,6 +24,24 @@ You can install and load it with:
 ```sql
 INSTALL inflector FROM community;
 LOAD inflector;
+```
+
+## Quick Start
+
+```sql
+-- Install and load the extension
+INSTALL inflector FROM community;
+LOAD inflector;
+
+-- Transform a single string
+SELECT inflector_to_camel_case('hello_world');  -- helloWorld
+
+-- Transform all column names in a struct
+SELECT inflect('snake', {'firstName': 'John', 'lastName': 'Doe'});
+-- {'first_name': John, 'last_name': Doe}
+
+-- Transform all column names from a table or query
+SELECT * FROM inflect('kebab', read_csv('data.csv'));
 ```
 
 ## Functions
@@ -166,11 +186,55 @@ Check if a string matches a specific case or format:
 
 Returns `true` or `false`.
 
+**Examples:**
+```sql
+SELECT inflector_is_snake_case('hello_world') as v;
+┌─────────┐
+│    v    │
+│ boolean │
+├─────────┤
+│ true    │
+└─────────┘
+
+SELECT inflector_is_camel_case('HelloWorld') as v;
+┌─────────┐
+│    v    │
+│ boolean │
+├─────────┤
+│ false   │
+└─────────┘
+
+SELECT inflector_is_foreign_key('user_id') as v;
+┌─────────┐
+│    v    │
+│ boolean │
+├─────────┤
+│ true    │
+└─────────┘
+```
+
 ### Struct and Table Column Inflection
 
-Inflect the keys of a `STRUCT` or table;s column names to a target case style:
+The `inflect()` function is the most powerful feature, allowing you to transform all column names in a struct or table result at once.
 
-- `inflect('case', struct_or_table)`
+Inflect the keys of a `STRUCT` or table's column names to a target case style:
+
+**Syntax:**
+```sql
+inflect('case_style', struct_or_table)
+```
+
+**Supported case styles:**
+- `'camel'` / `'camel_case'` → camelCase
+- `'class'` / `'class_case'` → ClassCase
+- `'snake'` / `'snake_case'` → snake_case
+- `'kebab'` / `'kebab_case'` → kebab-case
+- `'train'` / `'train_case'` → Train-Case
+- `'title'` / `'title_case'` → Title Case
+- `'table'` / `'table_case'` → table_names (pluralized snake_case)
+- `'sentence'` / `'sentence_case'` → Sentence case
+- `'upper'` / `'upper_case'` → UPPERCASE
+- `'lower'` / `'lower_case'` → lowercase
 
 **Examples:**
 ```sql
@@ -202,22 +266,153 @@ SELECT n FROM inflect('camel', (SELECT 1 AS counterValue, 't' AS first_name)) AS
 
 ## Real-World Examples
 
-### Normalize Table Columns
+### Normalize CSV Column Names
+```sql
+-- Convert PascalCase CSV headers to snake_case
+SELECT * FROM inflect('snake', read_csv('UserData.csv'));
+-- FirstName, LastName, EmailAddress → first_name, last_name, email_address
+```
+
+### Transform API Response Data
+```sql
+-- Convert camelCase JSON keys to snake_case for database storage
+CREATE TABLE users AS
+SELECT * FROM inflect('snake',
+  read_json('api_response.json')
+);
+```
+
+### Validate Naming Conventions
+```sql
+-- Check if all column names follow snake_case convention
+SELECT
+  column_name,
+  inflector_is_snake_case(column_name) as is_valid
+FROM information_schema.columns
+WHERE table_name = 'my_table';
+```
+
+### Schema Migration Between Conventions
+```sql
+-- Convert a Ruby on Rails style table to JavaScript convention
+CREATE TABLE users_camel AS
+SELECT * FROM inflect('camel', users);
+```
+
+### Generate Foreign Key Names
+```sql
+-- Create foreign key column names from table names
+SELECT
+  table_name,
+  inflector_to_foreign_key(table_name) as fk_column
+FROM information_schema.tables;
+```
+
+### Pluralize Table Names
+```sql
+-- Ensure all table names are plural
+SELECT
+  table_name,
+  inflector_to_plural(table_name) as plural_name
+FROM information_schema.tables;
+```
+
+### Clean and Standardize Text Data
+```sql
+-- Standardize mixed-case product categories
+UPDATE products
+SET category = inflector_to_title_case(category);
+```
+
+### Generate Display Labels
+```sql
+-- Convert snake_case column names to human-readable titles
+SELECT
+  'first_name' as column,
+  inflector_to_title_case('first_name') as label;  -- First Name
+```
+
+## Advanced Usage
+
+### Nested Struct Transformation
+```sql
+-- Inflect nested struct keys recursively
+SELECT inflect('camel', {
+  'user_info': {
+    'first_name': 'John',
+    'last_name': 'Doe'
+  }
+}) as result;
+```
+
+### Bulk Column Validation
+```sql
+-- Find all columns that don't follow snake_case
+WITH column_check AS (
+  SELECT
+    table_name,
+    column_name,
+    inflector_is_snake_case(column_name) as is_snake_case
+  FROM information_schema.columns
+)
+SELECT * FROM column_check WHERE NOT is_snake_case;
+```
+
+### Data Pipeline Transformation
 ```sql
 SELECT * FROM inflect('snake', read_csv('example.csv'));
 ```
 
+## Performance Considerations
+
+- **Transformation functions** are highly optimized and work efficiently on large datasets
+- **The `inflect()` function** operates on column metadata, not data, making it very fast
+- **Predicate functions** can be used in WHERE clauses and are optimized for filtering
+
 ## Tips and Best Practices
 
-1. **Use the right case for your project**: Consistent naming improves maintainability
-2. **Validate data**: Use predicate functions to enforce naming conventions
-3. **Automate schema migrations**: Use `inflect()` to convert column names in bulk
-4. **Combine with DuckDB's JSON/struct features**: Inflect nested data structures
-5. **Test with sample data**: Use the provided test cases as a reference
+1. **Use the right case for your project**: Consistent naming improves maintainability and reduces errors
+2. **Validate data early**: Use predicate functions in data quality checks during ETL
+3. **Automate schema migrations**: Use `inflect()` to convert column names in bulk rather than manual renaming
+4. **Combine with DuckDB's JSON/struct features**: Inflect nested data structures from APIs and config files
+5. **Standardize imports**: Apply inflection when reading external data (CSV, JSON, Parquet)
+6. **Use table_case for database tables**: Automatically pluralizes and converts to snake_case
+7. **Document your conventions**: Choose a case style and stick with it across your project
+
+## Error Handling
+
+The extension provides clear error messages for common issues:
+
+```sql
+-- Unknown case style
+SELECT inflect('unknown', {'foo': 1});
+-- Error: Unknown inflection 'unknown'. Supported: camel, class, snake, kebab, train, title, table, sentence, upper, lower
+
+-- Invalid arguments
+SELECT inflect('snake');
+-- Error: inflect() requires exactly two arguments: function name and value to inflect
+```
+
+## Frequently Asked Questions
+
+**Q: What's the difference between `class_case` and `pascal_case`?**
+A: They're the same! Both produce `PascalCase` output.
+
+**Q: Can I use `inflect()` on a table with millions of rows?**
+A: Yes! The `inflect()` function only transforms column *names*, not the data itself, so it's extremely fast regardless of table size.
+
+**Q: Does `table_case` always pluralize?**
+A: Yes, `table_case` converts to snake_case and pluralizes the name (e.g., `User` → `users`).
+
+**Q: Can I chain transformations?**
+A: Yes! You can nest `inflect()` calls or pipe results through multiple transformations.
 
 ## Contributing
 
-The Inflector extension is open source and developed by [Query.Farm](https://query.farm).
+The Inflector extension is open source and developed by [Query.Farm](https://query.farm). Contributions, bug reports, and feature requests are welcome!
+
+- GitHub: [Query-farm/inflector](https://github.com/Query-farm/inflector)
+- Website: [query.farm](https://query.farm)
 
 ## License
 
