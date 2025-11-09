@@ -1,181 +1,224 @@
-# DuckDB Extension Template
+# DuckDB Inflector Extension by [Query.Farm](https://query.farm)
 
-This repository contains a template for creating a DuckDB extension. The main goal of this template is to allow users to easily develop, test and distribute their own DuckDB extension. The main branch of the template is always based on the latest stable DuckDB allowing you to try out your extension right away.
+The **Inflector** extension, developed by **[Query.Farm](https://query.farm)**, brings string case transformation and inflection capabilities directly to your SQL queries in DuckDB. Effortlessly convert, check, and manipulate string case styles, pluralization, and more—right inside your database.
 
-## Getting started
+## Use Cases
 
-First step to getting started is to create your own repo from this template by clicking `Use this template`. Then clone your new repository using
+The Inflector extension is perfect for:
+- **Data normalization**: Standardize column names and values to a consistent case style
+- **ETL pipelines**: Transform and clean data during ingestion or export
+- **API and report generation**: Match naming conventions for downstream systems
+- **Schema migration**: Convert between naming conventions (snake_case, camelCase, etc.)
+- **Data validation**: Check if strings conform to required case or format
+- **Pluralization/Singularization**: Automatically convert between singular and plural forms
+- **Foreign key and module name handling**: Generate or validate foreign key names and Ruby-style module paths
 
-```sh
-git clone --recurse-submodules https://github.com/<you>/<your-new-extension-repo>.git
+## Installation
+
+**`inflector` is a [DuckDB Community Extension](https://github.com/duckdb/community-extensions).**
+
+You can install and load it with:
+
+```sql
+INSTALL inflector FROM community;
+LOAD inflector;
 ```
 
-Note that `--recurse-submodules` will ensure DuckDB is pulled which is required to build the extension.
+## Functions
 
-## Building
+### Case Transformation Functions
 
-### Managing dependencies
+Transform a string to a specific case style:
 
-DuckDB extensions uses VCPKG for dependency management. Enabling VCPKG is very simple: follow the [installation instructions](https://vcpkg.io/en/getting-started) or just run the following:
+- `inflector_to_class_case(str)` → `ClassCase`
+- `inflector_to_camel_case(str)` → `camelCase`
+- `inflector_to_pascal_case(str)` → `PascalCase`
+- `inflector_to_screamingsnake_case(str)` → `SCREAMING_SNAKE_CASE`
+- `inflector_to_snake_case(str)` → `snake_case`
+- `inflector_to_kebab_case(str)` → `kebab-case`
+- `inflector_to_train_case(str)` → `Train-Case`
+- `inflector_to_sentence_case(str)` → `Sentence case`
+- `inflector_to_title_case(str)` → `Title Case`
+- `inflector_to_table_case(str)` → `table_names`
+- `inflector_to_upper_case(str)` → `UPPERCASE`
+- `inflector_to_lower_case(str)` → `lowercase`
 
-```shell
-cd <your-working-dir-not-the-plugin-repo>
-git clone https://github.com/Microsoft/vcpkg.git
-sh ./vcpkg/scripts/bootstrap.sh -disableMetrics
-export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
+**Examples:**
+```sql
+SELECT inflector_to_camel_case('hello_world') as v;
+┌────────────┐
+│     v      │
+│  varchar   │
+├────────────┤
+│ helloWorld │
+└────────────┘
+
+SELECT inflector_to_snake_case('HelloWorld') as v;
+┌─────────────┐
+│      v      │
+│   varchar   │
+├─────────────┤
+│ hello_world │
+└─────────────┘
+
+SELECT inflector_to_title_case('hello_world') as v;
+┌─────────────┐
+│      v      │
+│   varchar   │
+├─────────────┤
+│ Hello World │
+└─────────────┘
 ```
 
-Note: VCPKG is only required for extensions that want to rely on it for dependency management. If you want to develop an extension without dependencies, or want to do your own dependency management, just skip this step. Note that the example extension uses VCPKG to build with a dependency for instructive purposes, so when skipping this step the build may not work without removing the dependency.
+### Pluralization and Singularization
 
-### Build steps
+- `inflector_to_plural(str)` → plural form
+- `inflector_to_singular(str)` → singular form
 
-Now to build the extension, run:
+```sql
+SELECT inflector_to_plural('person') as v;
+┌─────────┐
+│    v    │
+│ varchar │
+├─────────┤
+│ people  │
+└─────────┘
 
-```sh
-make
+SELECT inflector_to_singular('ducks') as v;
+┌─────────┐
+│    v    │
+│ varchar │
+├─────────┤
+│ duck    │
+└─────────┘
 ```
 
-The main binaries that will be built are:
+### Ordinalization
 
-```sh
-./build/release/duckdb
-./build/release/test/unittest
-./build/release/extension/<extension_name>/<extension_name>.duckdb_extension
+- `inflector_ordinalize(str)` → ordinal string (e.g., `1st`, `2nd`)
+- `inflector_deordinalize(str)` → number string (e.g., `1st` → `1`)
+
+```sql
+SELECT inflector_ordinalize('5') as v;
+┌─────────┐
+│    v    │
+│ varchar │
+├─────────┤
+│ 5th     │
+└─────────┘
+
+SELECT inflector_deordinalize('21st') as v;
+┌─────────┐
+│    v    │
+│ varchar │
+├─────────┤
+│ 21      │
+└─────────┘
 ```
 
-- `duckdb` is the binary for the duckdb shell with the extension code automatically loaded.
-- `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
-- `<extension_name>.duckdb_extension` is the loadable binary as it would be distributed.
+### Foreign Key and Module Functions
 
-### Tips for speedy builds
+- `inflector_to_foreign_key(str)` → foreign key name (e.g., `User` → `user_id`)
+- `inflector_demodulize(str)` → last module/class name (e.g., `A::B::C` → `C`)
+- `inflector_deconstantize(str)` → parent module path (e.g., `A::B::C` → `A::B`)
 
-DuckDB extensions currently rely on DuckDB's build system to provide easy testing and distributing. This does however come at the downside of requiring the template to build DuckDB and its unittest binary every time you build your extension. To mitigate this, we highly recommend installing [ccache](https://ccache.dev/) and [ninja](https://ninja-build.org/). This will ensure you only need to build core DuckDB once and allows for rapid rebuilds.
+```sql
+SELECT inflector_to_foreign_key('User') as v;
+┌─────────┐
+│    v    │
+│ varchar │
+├─────────┤
+│ user_id │
+└─────────┘
 
-To build using ninja and ccache ensure both are installed and run:
+SELECT inflector_demodulize('ActiveRecord::CoreExtensions::String::Inflections') as v;
+┌────────────┐
+│     v      │
+│  varchar   │
+├────────────┤
+│ Inflection │
+└────────────┘
 
-```sh
-GEN=ninja make
+SELECT inflector_deconstantize('ActiveRecord::CoreExtensions::String::Inflections') as v;
+┌─────────┐
+│    v    │
+│ varchar │
+├─────────┤
+│ String  │
+└─────────┘
 ```
 
-## Running the extension
+### Predicate Functions
 
-To run the extension code, simply start the shell with `./build/release/duckdb`. This shell will have the extension pre-loaded.
+Check if a string matches a specific case or format:
 
-Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `inflector()` that takes a string arguments and returns a string:
+- `inflector_is_class_case(str)`
+- `inflector_is_camel_case(str)`
+- `inflector_is_pascal_case(str)`
+- `inflector_is_screamingsnake_case(str)`
+- `inflector_is_snake_case(str)`
+- `inflector_is_kebab_case(str)`
+- `inflector_is_train_case(str)`
+- `inflector_is_sentence_case(str)`
+- `inflector_is_title_case(str)`
+- `inflector_is_table_case(str)`
+- `inflector_is_foreign_key(str)`
 
-```
-D select inflector('Jane') as result;
-┌───────────────┐
-│    result     │
-│    varchar    │
-├───────────────┤
-│ Inflector Jane 🐥 │
-└───────────────┘
-```
+Returns `true` or `false`.
 
-## Running the tests
+### Struct and Table Column Inflection
 
-Different tests can be created for DuckDB extensions. The primary way of testing DuckDB extensions should be the SQL tests in `./test/sql`. These SQL tests can be run using:
+Inflect the keys of a `STRUCT` or table;s column names to a target case style:
 
-```sh
-make test
-```
+- `inflect('case', struct_or_table)`
 
-## Getting started with your own extension
+**Examples:**
+```sql
+SELECT inflect('snake', {'firstName': 1, 'lastName': 2}) as v;
+┌───────────────────────────────────────────────┐
+│                       v                       │
+│ struct(first_name integer, last_name integer) │
+├───────────────────────────────────────────────┤
+│ {'first_name': 1, 'last_name': 2}             │
+└───────────────────────────────────────────────┘
 
-After creating a repository from this template, the first step is to name your extension. To rename the extension, run:
+SELECT inflect('class', {'first_name': 1, 'last_name': 2}) as v;
+┌─────────────────────────────────────────────┐
+│                      v                      │
+│ struct(firstname integer, lastname integer) │
+├─────────────────────────────────────────────┤
+│ {'FirstName': 1, 'LastName': 2}             │
+└─────────────────────────────────────────────┘
 
-```
-python3 ./scripts/bootstrap-template.py <extension_name_you_want>
-```
-
-Feel free to delete the script after this step.
-
-Now you're good to go! After a (re)build, you should now be able to use your duckdb extension:
-
-```
-./build/release/duckdb
-D select <extension_name_you_chose>('Jane') as result;
-┌─────────────────────────────────────┐
-│                result               │
-│               varchar               │
-├─────────────────────────────────────┤
-│ <extension_name_you_chose> Jane 🐥  │
-└─────────────────────────────────────┘
-```
-
-For inspiration/examples on how to extend DuckDB in a more meaningful way, check out the [test extensions](https://github.com/duckdb/duckdb/blob/main/test/extension),
-the [in-tree extensions](https://github.com/duckdb/duckdb/tree/main/extension), and the [out-of-tree extensions](https://github.com/duckdblabs).
-
-## Distributing your extension
-
-To distribute your extension binaries, there are a few options.
-
-### Community extensions
-
-The recommended way of distributing extensions is through the [community extensions repository](https://github.com/duckdb/community-extensions).
-This repository is designed specifically for extensions that are built using this extension template, meaning that as long as your extension can be
-built using the default CI in this template, submitting it to the community extensions is a very simple process. The process works similarly to popular
-package managers like homebrew and vcpkg, where a PR containing a descriptor file is submitted to the package manager repository. After the CI in the
-community extensions repository completes, the extension can be installed and loaded in DuckDB with:
-
-```SQL
-INSTALL <my_extension> FROM community;
-LOAD <my_extension>
+-- Table returning function.
+SELECT n FROM inflect('camel', (SELECT 1 AS counterValue, 't' AS first_name)) AS n;
+┌─────────────────────────────────────────────────┐
+│                        n                        │
+│ struct(countervalue integer, firstname varchar) │
+├─────────────────────────────────────────────────┤
+│ {'counterValue': 1, 'firstName': t}             │
+└─────────────────────────────────────────────────┘
 ```
 
-For more information, see the [community extensions documentation](https://duckdb.org/community_extensions/documentation).
+## Real-World Examples
 
-### Downloading artifacts from GitHub
-
-The default CI in this template will automatically upload the binaries for every push to the main branch as GitHub Actions artifacts. These
-can be downloaded manually and then loaded directly using:
-
-```SQL
-LOAD '/path/to/downloaded/extension.duckdb_extension';
+### Normalize Table Columns
+```sql
+SELECT * FROM inflect('snake', read_csv('example.csv'));
 ```
 
-Note that this will require starting DuckDB with the
-`allow_unsigned_extensions` option set to true. How to set this will depend on the client you're using. For the CLI it is done like:
+## Tips and Best Practices
 
-```shell
-duckdb -unsigned
-```
+1. **Use the right case for your project**: Consistent naming improves maintainability
+2. **Validate data**: Use predicate functions to enforce naming conventions
+3. **Automate schema migrations**: Use `inflect()` to convert column names in bulk
+4. **Combine with DuckDB's JSON/struct features**: Inflect nested data structures
+5. **Test with sample data**: Use the provided test cases as a reference
 
-### Uploading to a custom repository
+## Contributing
 
-If for some reason distributing through community extensions is not an option, extensions can also be uploaded to a custom extension repository.
-This will give some more control over where and how the extensions are distributed, but comes with the downside of requiring the `allow_unsigned_extensions`
-option to be set. For examples of how to configure a manual GitHub Actions deploy pipeline, check out the extension deploy script in https://github.com/duckdb/extension-ci-tools.
-Some examples of extensions that use this CI/CD workflow check out [spatial](https://github.com/duckdblabs/duckdb_spatial) or [aws](https://github.com/duckdb/duckdb_aws).
+The Inflector extension is open source and developed by [Query.Farm](https://query.farm).
 
-Extensions in custom repositories can be installed and loaded using:
+## License
 
-```SQL
-INSTALL <my_extension> FROM 'http://my-custom-repo'
-LOAD <my_extension>
-```
-
-### Versioning of your extension
-
-Extension binaries will only work for the specific DuckDB version they were built for. The version of DuckDB that is targeted
-is set to the latest stable release for the main branch of the template so initially that is all you need. As new releases
-of DuckDB are published however, the extension repository will need to be updated. The template comes with a workflow set-up
-that will automatically build the binaries for all DuckDB target architectures that are available in the corresponding DuckDB
-version. This workflow is found in `.github/workflows/MainDistributionPipeline.yml`. It is up to the extension developer to keep
-this up to date with DuckDB. Note also that its possible to distribute binaries for multiple DuckDB versions in this workflow
-by simply duplicating the jobs.
-
-## Setting up CLion
-
-### Opening project
-
-Configuring CLion with the extension template requires a little work. Firstly, make sure that the DuckDB submodule is available.
-Then make sure to open `./duckdb/CMakeLists.txt` (so not the top level `CMakeLists.txt` file from this repo) as a project in CLion.
-Now to fix your project path go to `tools->CMake->Change Project Root`([docs](https://www.jetbrains.com/help/clion/change-project-root-directory.html)) to set the project root to the root dir of this repo.
-
-### Debugging
-
-To set up debugging in CLion, there are two simple steps required. Firstly, in `CLion -> Settings / Preferences -> Build, Execution, Deploy -> CMake` you will need to add the desired builds (e.g. Debug, Release, RelDebug, etc). There's different ways to configure this, but the easiest is to leave all empty, except the `build path`, which needs to be set to `../build/{build type}`. Now on a clean repository you will first need to run `make {build type}` to initialize the CMake build directory. After running make, you will be able to (re)build from CLion by using the build target we just created. If you use the CLion editor, you can create a CLion CMake profiles matching the CMake variables that are described in the makefile, and then you don't need to invoke the Makefile.
-
-The second step is to configure the unittest runner as a run/debug configuration. To do this, go to `Run -> Edit Configurations` and click `+ -> Cmake Application`. The target and executable should be `unittest`. This will run all the DuckDB tests. To specify only running the extension specific tests, add `--test-dir ../../.. [sql]` to the `Program Arguments`. Note that it is recommended to use the `unittest` executable for testing/development within CLion. The actual DuckDB CLI currently does not reliably work as a run target in CLion.
+[MIT License](LICENSE)

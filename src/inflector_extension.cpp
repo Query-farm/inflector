@@ -6,6 +6,7 @@
 #include "duckdb/function/scalar_function.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include "rust.h"
+#include "query_farm_telemetry.hpp"
 namespace duckdb {
 
 // Generic helper for string transformations
@@ -300,6 +301,8 @@ void LoadInternal(ExtensionLoader &loader) {
 	auto inflect_struct_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::ANY}, LogicalType::ANY,
 	                                              InflectScalarFunc, InflectScalarBind);
 	loader.RegisterFunction(inflect_struct_function);
+
+	QueryFarmSendTelemetry(loader, "inflector", "2025110901");
 }
 
 void InflectorExtension::Load(ExtensionLoader &loader) {
