@@ -1,0 +1,318 @@
+# name: test/sql/inflector.test
+# description: test inflector extension
+# group: [sql]
+
+# Before we load the extension, this will fail
+statement error
+SELECT inflect('title', {'foo': 2});
+----
+Catalog Error: Scalar Function with name inflect does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require inflector
+
+# Confirm the extension works
+query T
+SELECT inflect('title', {'foo_bar_baz': 5})
+----
+{'Foo Bar Baz': 5}
+
+query T
+SELECT inflect('camel', {'foo_bar_baz': 5})
+----
+{'fooBarBaz': 5}
+
+query T
+SELECT inflect('camel', {'foo_bar_baz': 5})
+----
+{'fooBarBaz': 5}
+
+query T
+SELECT n from inflect('camel', (select * as counterValue, 't' as first_name from range(10))) as n;
+----
+{'counterValue': 0, 'firstName': t}
+{'counterValue': 1, 'firstName': t}
+{'counterValue': 2, 'firstName': t}
+{'counterValue': 3, 'firstName': t}
+{'counterValue': 4, 'firstName': t}
+{'counterValue': 5, 'firstName': t}
+{'counterValue': 6, 'firstName': t}
+{'counterValue': 7, 'firstName': t}
+{'counterValue': 8, 'firstName': t}
+{'counterValue': 9, 'firstName': t}
+
+query T
+SELECT inflector_ordinalize('5');
+----
+5th
+
+# Test all case transformation functions
+query T
+SELECT inflector_to_class_case('hello_world');
+----
+HelloWorld
+
+query T
+SELECT inflector_to_camel_case('hello_world');
+----
+helloWorld
+
+query T
+SELECT inflector_to_pascal_case('hello_world');
+----
+HelloWorld
+
+query T
+SELECT inflector_to_screamingsnake_case('helloWorld');
+----
+HELLO_WORLD
+
+query T
+SELECT inflector_to_snake_case('helloWorld');
+----
+hello_world
+
+query T
+SELECT inflector_to_kebab_case('helloWorld');
+----
+hello-world
+
+query T
+SELECT inflector_to_train_case('hello_world');
+----
+Hello-World
+
+query T
+SELECT inflector_to_sentence_case('hello_world');
+----
+Hello world
+
+query T
+SELECT inflector_to_title_case('hello_world');
+----
+Hello World
+
+query T
+SELECT inflector_to_table_case('HelloWorld');
+----
+hello_worlds
+
+# Test ordinalization functions
+query T
+SELECT inflector_ordinalize('1');
+----
+1st
+
+query T
+SELECT inflector_ordinalize('2');
+----
+2nd
+
+query T
+SELECT inflector_ordinalize('3');
+----
+3rd
+
+query T
+SELECT inflector_ordinalize('21');
+----
+21st
+
+query T
+SELECT inflector_deordinalize('1st');
+----
+1
+
+query T
+SELECT inflector_deordinalize('2nd');
+----
+2
+
+query T
+SELECT inflector_deordinalize('3rd');
+----
+3
+
+query T
+SELECT inflector_deordinalize('21st');
+----
+21
+
+# Test foreign key and module functions
+query T
+SELECT inflector_to_foreign_key('User');
+----
+user_id
+
+query T
+SELECT inflector_demodulize('ActiveRecord::CoreExtensions::String::Inflections');
+----
+Inflection
+
+query T
+SELECT inflector_deconstantize('ActiveRecord::CoreExtensions::String::Inflections');
+----
+String
+
+# Test pluralization functions
+query T
+SELECT inflector_to_plural('person');
+----
+people
+
+query T
+SELECT inflector_to_plural('child');
+----
+children
+
+query T
+SELECT inflector_to_plural('user');
+----
+users
+
+query T
+SELECT inflector_to_singular('users');
+----
+user
+
+# Test predicate functions - case checkers
+query T
+SELECT inflector_is_class_case('HelloWorld');
+----
+true
+
+query T
+SELECT inflector_is_class_case('hello_world');
+----
+false
+
+query T
+SELECT inflector_is_camel_case('helloWorld');
+----
+true
+
+query T
+SELECT inflector_is_camel_case('HelloWorld');
+----
+false
+
+query T
+SELECT inflector_is_pascal_case('HelloWorld');
+----
+true
+
+query T
+SELECT inflector_is_pascal_case('helloWorld');
+----
+false
+
+query T
+SELECT inflector_is_screamingsnake_case('HELLO_WORLD');
+----
+true
+
+query T
+SELECT inflector_is_screamingsnake_case('hello_world');
+----
+false
+
+query T
+SELECT inflector_is_snake_case('hello_world');
+----
+true
+
+query T
+SELECT inflector_is_snake_case('helloWorld');
+----
+false
+
+query T
+SELECT inflector_is_kebab_case('hello-world');
+----
+true
+
+query T
+SELECT inflector_is_kebab_case('hello_world');
+----
+false
+
+query T
+SELECT inflector_is_train_case('Hello-World');
+----
+true
+
+query T
+SELECT inflector_is_train_case('hello-world');
+----
+false
+
+query T
+SELECT inflector_is_sentence_case('Hello world');
+----
+true
+
+query T
+SELECT inflector_is_sentence_case('Hello World');
+----
+false
+
+query T
+SELECT inflector_is_title_case('Hello World');
+----
+true
+
+query T
+SELECT inflector_is_title_case('Hello world');
+----
+false
+
+query T
+SELECT inflector_is_table_case('hello_worlds');
+----
+true
+
+query T
+SELECT inflector_is_table_case('hello_world');
+----
+false
+
+query T
+SELECT inflector_is_foreign_key('user_id');
+----
+true
+
+query T
+SELECT inflector_is_foreign_key('user');
+----
+false
+
+# Test inflect function with different case styles
+query T
+SELECT inflect('snake', {'firstName': 1, 'lastName': 2});
+----
+{'first_name': 1, 'last_name': 2}
+
+query T
+SELECT inflect('kebab', {'firstName': 1, 'lastName': 2});
+----
+{'first-name': 1, 'last-name': 2}
+
+query T
+SELECT inflect('class', {'first_name': 1, 'last_name': 2});
+----
+{'FirstName': 1, 'LastName': 2}
+
+query T
+SELECT inflect('train', {'first_name': 1, 'last_name': 2});
+----
+{'First-Name': 1, 'Last-Name': 2}
+
+query T
+SELECT inflect('sentence', {'first_name': 1, 'last_name': 2});
+----
+{'First name': 1, 'Last name': 2}
+
+query T
+SELECT inflect('table', {'FirstName': 1, 'LastName': 2});
+----
+{'first_names': 1, 'last_names': 2}

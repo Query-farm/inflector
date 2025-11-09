@@ -1,0 +1,12 @@
+[package]
+name = "duckdb_inflector_binding"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "duckdb_inflector_binding"
+crate-type = ["staticlib"]
+
+[dependencies]
+cruet = "0.15.0"
