@@ -7,6 +7,7 @@ Whether you're normalizing API responses, migrating schemas between naming conve
 ## Use Cases
 
 The Inflector extension is perfect for:
+
 - **Data normalization**: Standardize column names and values to a consistent case style
 - **ETL pipelines**: Transform and clean data during ingestion or export
 - **API and report generation**: Match naming conventions for downstream systems
@@ -41,7 +42,7 @@ SELECT inflect('snake', {'firstName': 'John', 'lastName': 'Doe'});
 -- {'first_name': John, 'last_name': Doe}
 
 -- Transform all column names from a table or query
-SELECT * FROM inflect('kebab', read_csv('data.csv'));
+SELECT * FROM inflect('kebab', (select * FROM read_csv('data.csv')));
 ```
 
 ## Functions
@@ -217,14 +218,20 @@ SELECT inflector_is_foreign_key('user_id') as v;
 
 The `inflect()` function is the most powerful feature, allowing you to transform all column names in a struct or table result at once.
 
-Inflect the keys of a `STRUCT` or table's column names to a target case style:
+This example Inflect the keys of a `STRUCT` or table's column names to a target case style:
 
 **Syntax:**
 ```sql
-inflect('case_style', struct_or_table)
+SELECT * FROM inflect('case_style', {'example_field': 5, 'ExampleField2': 3});
+
+-- or inflect an entire result
+
+SELECT * FROM inflect('case_style', (select * FROM 'example.parquet'));
+
 ```
 
 **Supported case styles:**
+
 - `'camel'` / `'camel_case'` → camelCase
 - `'class'` / `'class_case'` → ClassCase
 - `'snake'` / `'snake_case'` → snake_case
@@ -255,7 +262,7 @@ SELECT inflect('class', {'first_name': 1, 'last_name': 2}) as v;
 └─────────────────────────────────────────────┘
 
 -- Table returning function.
-SELECT n FROM inflect('camel', (SELECT 1 AS counterValue, 't' AS first_name)) AS n;
+SELECT n FROM inflect('camel', (SELECT * FROM 'example.parquet')) AS n;
 ┌─────────────────────────────────────────────────┐
 │                        n                        │
 │ struct(countervalue integer, firstname varchar) │
@@ -269,17 +276,8 @@ SELECT n FROM inflect('camel', (SELECT 1 AS counterValue, 't' AS first_name)) AS
 ### Normalize CSV Column Names
 ```sql
 -- Convert PascalCase CSV headers to snake_case
-SELECT * FROM inflect('snake', read_csv('UserData.csv'));
+SELECT * FROM inflect('snake', (select * FROM read_csv('UserData.csv')));
 -- FirstName, LastName, EmailAddress → first_name, last_name, email_address
-```
-
-### Transform API Response Data
-```sql
--- Convert camelCase JSON keys to snake_case for database storage
-CREATE TABLE users AS
-SELECT * FROM inflect('snake',
-  read_json('api_response.json')
-);
 ```
 
 ### Validate Naming Conventions
@@ -296,7 +294,7 @@ WHERE table_name = 'my_table';
 ```sql
 -- Convert a Ruby on Rails style table to JavaScript convention
 CREATE TABLE users_camel AS
-SELECT * FROM inflect('camel', users);
+SELECT * FROM inflect('camel', (select * FROM users));
 ```
 
 ### Generate Foreign Key Names
@@ -360,7 +358,7 @@ SELECT * FROM column_check WHERE NOT is_snake_case;
 
 ### Data Pipeline Transformation
 ```sql
-SELECT * FROM inflect('snake', read_csv('example.csv'));
+SELECT * FROM inflect('snake', (select * FROM read_csv('example.csv')));
 ```
 
 ## Performance Considerations
@@ -396,23 +394,24 @@ SELECT inflect('snake');
 ## Frequently Asked Questions
 
 **Q: What's the difference between `class_case` and `pascal_case`?**
+
 A: They're the same! Both produce `PascalCase` output.
 
 **Q: Can I use `inflect()` on a table with millions of rows?**
+
 A: Yes! The `inflect()` function only transforms column *names*, not the data itself, so it's extremely fast regardless of table size.
 
 **Q: Does `table_case` always pluralize?**
+
 A: Yes, `table_case` converts to snake_case and pluralizes the name (e.g., `User` → `users`).
 
 **Q: Can I chain transformations?**
+
 A: Yes! You can nest `inflect()` calls or pipe results through multiple transformations.
 
 ## Contributing
 
-The Inflector extension is open source and developed by [Query.Farm](https://query.farm). Contributions, bug reports, and feature requests are welcome!
-
-- GitHub: [Query-farm/inflector](https://github.com/Query-farm/inflector)
-- Website: [query.farm](https://query.farm)
+The Inflector extension is open source and developed by [Query.Farm](https://query.farm).
 
 ## License
 
