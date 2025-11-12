@@ -32,7 +32,6 @@ SELECT inflect('camel', 'foo_bar_baz')
 ----
 fooBarBaz
 
-
 query T
 SELECT n from inflect('camel', (select * as counterValue, 't' as first_name from range(10))) as n;
 ----
