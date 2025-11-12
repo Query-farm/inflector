@@ -229,6 +229,31 @@ unique_ptr<FunctionData> InflectScalarBind(ClientContext &context, ScalarFunctio
 	return make_uniq<InflectScalarBindData>(transform);
 }
 
+void InflectStringFunc(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &type_vector = args.data[0];
+	auto &source = args.data[1];
+
+	BinaryExecutor::Execute<string_t, string_t, string_t>(
+	    type_vector, source, result, args.size(), [&result](string_t name, string_t data) -> string_t {
+		    auto function_name = name.GetString();
+		    auto value = data.GetString();
+
+		    auto it = transformer_map.find(function_name);
+		    if (it == transformer_map.end()) {
+			    throw InvalidInputException(
+			        "Unknown inflection '%s'. Supported: camel, class, snake, kebab, train, title, "
+			        "table, sentence, upper, lower",
+			        function_name.c_str());
+		    }
+		    TransformFunc transform = it->second;
+
+		    char *change_result = transform(value.c_str());
+		    string_t return_result = StringVector::AddString(result, change_result);
+		    free_c_string(change_result);
+		    return return_result;
+	    });
+}
+
 void InflectScalarFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &source = args.data[1];
 
@@ -298,9 +323,16 @@ void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(inflect_table_function);
 
 	// Now need a scalar function that will inflect a struct type.
+	auto scalar_function_set = ScalarFunctionSet("inflect");
+	auto inflect_string_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                                              LogicalType::VARCHAR, InflectStringFunc);
+	scalar_function_set.AddFunction(inflect_string_function);
+
 	auto inflect_struct_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::ANY}, LogicalType::ANY,
 	                                              InflectScalarFunc, InflectScalarBind);
-	loader.RegisterFunction(inflect_struct_function);
+	scalar_function_set.AddFunction(inflect_struct_function);
+
+	loader.RegisterFunction(scalar_function_set);
 
 	QueryFarmSendTelemetry(loader, "inflector", "2025110901");
 }

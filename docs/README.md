@@ -37,6 +37,9 @@ LOAD inflector;
 -- Transform a single string
 SELECT inflector_to_camel_case('hello_world');  -- helloWorld
 
+-- Transform a single string
+SELECT inflect('camel', 'hello_world');  -- helloWorld
+
 -- Transform all column names in a struct
 SELECT inflect('snake', {'firstName': 'John', 'lastName': 'Doe'});
 -- {'first_name': John, 'last_name': Doe}
@@ -64,9 +67,19 @@ Transform a string to a specific case style:
 - `inflector_to_upper_case(str)` → `UPPERCASE`
 - `inflector_to_lower_case(str)` → `lowercase`
 
+You can also use the funciton `inflect(case_name, value)`,
+
 **Examples:**
 ```sql
 SELECT inflector_to_camel_case('hello_world') as v;
+┌────────────┐
+│     v      │
+│  varchar   │
+├────────────┤
+│ helloWorld │
+└────────────┘
+
+SELECT inflect('camel', 'hello_world') as v;
 ┌────────────┐
 │     v      │
 │  varchar   │
@@ -218,7 +231,7 @@ SELECT inflector_is_foreign_key('user_id') as v;
 
 The `inflect()` function is the most powerful feature, allowing you to transform all column names in a struct or table result at once.
 
-This example Inflect the keys of a `STRUCT` or table's column names to a target case style:
+This example inflects the keys of a `STRUCT` or table's column names to a target case style:
 
 **Syntax:**
 ```sql
@@ -226,7 +239,7 @@ SELECT * FROM inflect('case_style', {'example_field': 5, 'ExampleField2': 3});
 
 -- or inflect an entire result
 
-SELECT * FROM inflect('case_style', (select * FROM 'example.parquet'));
+SELECT * FROM inflect('case_style', (SELECT * FROM 'example.parquet'));
 
 ```
 
