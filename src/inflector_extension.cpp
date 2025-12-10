@@ -5,19 +5,25 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_function_info.hpp>
 #include "rust.h"
 #include "query_farm_telemetry.hpp"
 namespace duckdb {
 
-// Generic helper for string transformations
+// Generic helper for string transformations with documentation
 inline void RegisterInflectorTransform(ExtensionLoader &loader, const char *sql_name,
-                                       char *(*cruet_func)(const char *)) {
+                                       char *(*cruet_func)(const char *), const char *description,
+                                       const char *example, const char *param_name,
+                                       vector<string> categories) {
 	auto fun_impl = [cruet_func](DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &name_vector = args.data[0];
 		UnaryExecutor::Execute<string_t, string_t>(
 		    name_vector, result, args.size(), [cruet_func, &result](string_t name) -> string_t {
 			    auto value = name.GetString();
 			    char *change_result = cruet_func(value.c_str());
+			    if (!change_result) {
+				    throw InternalException("Inflector transform returned null - memory allocation failed");
+			    }
 			    string_t return_result = StringVector::AddString(result, change_result);
 			    free_c_string(change_result);
 			    return return_result;
@@ -25,12 +31,24 @@ inline void RegisterInflectorTransform(ExtensionLoader &loader, const char *sql_
 	};
 
 	ScalarFunction fun(sql_name, {LogicalType::VARCHAR}, LogicalType::VARCHAR, fun_impl);
-	loader.RegisterFunction(fun);
+	CreateScalarFunctionInfo info(fun);
+
+	FunctionDescription func_desc;
+	func_desc.description = description;
+	func_desc.examples.push_back(example);
+	func_desc.parameter_names.push_back(param_name);
+	func_desc.parameter_types.push_back(LogicalType::VARCHAR);
+	func_desc.categories = std::move(categories);
+	info.descriptions.push_back(std::move(func_desc));
+
+	loader.RegisterFunction(info);
 }
 
-// Generic helper for boolean predicates
+// Generic helper for boolean predicates with documentation
 inline void RegisterInflectorPredicate(ExtensionLoader &loader, const char *sql_name,
-                                       unsigned char (*cruet_func)(const char *)) {
+                                       unsigned char (*cruet_func)(const char *), const char *description,
+                                       const char *example, const char *param_name,
+                                       vector<string> categories) {
 	auto fun_impl = [cruet_func](DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &name_vector = args.data[0];
 		UnaryExecutor::Execute<string_t, bool>(name_vector, result, args.size(), [cruet_func](string_t name) -> bool {
@@ -40,7 +58,17 @@ inline void RegisterInflectorPredicate(ExtensionLoader &loader, const char *sql_
 	};
 
 	ScalarFunction fun(sql_name, {LogicalType::VARCHAR}, LogicalType::BOOLEAN, fun_impl);
-	loader.RegisterFunction(fun);
+	CreateScalarFunctionInfo info(fun);
+
+	FunctionDescription func_desc;
+	func_desc.description = description;
+	func_desc.examples.push_back(example);
+	func_desc.parameter_names.push_back(param_name);
+	func_desc.parameter_types.push_back(LogicalType::VARCHAR);
+	func_desc.categories = std::move(categories);
+	info.descriptions.push_back(std::move(func_desc));
+
+	loader.RegisterFunction(info);
 }
 
 struct InflectBindData : public FunctionData {
@@ -97,6 +125,9 @@ static unique_ptr<FunctionData> InflectTableBind(ClientContext &context, TableFu
 		return_types.push_back(part_type);
 
 		char *new_name = transform(part_name.c_str());
+		if (!new_name) {
+			throw InternalException("Inflector transform returned null - memory allocation failed");
+		}
 		names.emplace_back(new_name);
 		free_c_string(new_name);
 	}
@@ -154,6 +185,9 @@ LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform,
 
 			// Apply name inflection here
 			auto new_name = transform(name.c_str());
+			if (!new_name) {
+				throw InternalException("Inflector transform returned null - memory allocation failed");
+			}
 			new_children.emplace_back(new_name, updated_type);
 			free_c_string(new_name);
 		}
@@ -248,6 +282,9 @@ void InflectStringFunc(DataChunk &args, ExpressionState &state, Vector &result) 
 		    TransformFunc transform = it->second;
 
 		    char *change_result = transform(value.c_str());
+		    if (!change_result) {
+			    throw InternalException("Inflector transform returned null - memory allocation failed");
+		    }
 		    string_t return_result = StringVector::AddString(result, change_result);
 		    free_c_string(change_result);
 		    return return_result;
@@ -284,45 +321,119 @@ void InflectScalarFunc(DataChunk &args, ExpressionState &state, Vector &result) 
 
 // Load all inflector functions
 void LoadInternal(ExtensionLoader &loader) {
-	// Transform functions
-	RegisterInflectorTransform(loader, "inflector_to_class_case", cruet_to_class_case);
-	RegisterInflectorTransform(loader, "inflector_to_camel_case", cruet_to_camel_case);
-	RegisterInflectorTransform(loader, "inflector_to_pascal_case", cruet_to_pascal_case);
-	RegisterInflectorTransform(loader, "inflector_to_screamingsnake_case", cruet_to_screamingsnake_case);
-	RegisterInflectorTransform(loader, "inflector_to_snake_case", cruet_to_snake_case);
-	RegisterInflectorTransform(loader, "inflector_to_kebab_case", cruet_to_kebab_case);
-	RegisterInflectorTransform(loader, "inflector_to_train_case", cruet_to_train_case);
-	RegisterInflectorTransform(loader, "inflector_to_sentence_case", cruet_to_sentence_case);
-	RegisterInflectorTransform(loader, "inflector_to_title_case", cruet_to_title_case);
-	RegisterInflectorTransform(loader, "inflector_to_table_case", cruet_to_table_case);
-	RegisterInflectorTransform(loader, "inflector_ordinalize", cruet_ordinalize);
-	RegisterInflectorTransform(loader, "inflector_deordinalize", cruet_deordinalize);
-	RegisterInflectorTransform(loader, "inflector_to_foreign_key", cruet_to_foreign_key);
-	RegisterInflectorTransform(loader, "inflector_demodulize", cruet_demodulize);
-	RegisterInflectorTransform(loader, "inflector_deconstantize", cruet_deconstantize);
-	RegisterInflectorTransform(loader, "inflector_to_plural", cruet_to_plural);
-	RegisterInflectorTransform(loader, "inflector_to_singular", cruet_to_singular);
+	// Transform functions - case conversion
+	RegisterInflectorTransform(loader, "inflector_to_class_case", cruet_to_class_case,
+	                           "Converts a string to ClassCase (PascalCase) format",
+	                           "inflector_to_class_case('hello_world')", "text", {"text", "case_conversion"});
+	RegisterInflectorTransform(loader, "inflector_to_camel_case", cruet_to_camel_case,
+	                           "Converts a string to camelCase format",
+	                           "inflector_to_camel_case('hello_world')", "text", {"text", "case_conversion"});
+	RegisterInflectorTransform(loader, "inflector_to_pascal_case", cruet_to_pascal_case,
+	                           "Converts a string to PascalCase format",
+	                           "inflector_to_pascal_case('hello_world')", "text", {"text", "case_conversion"});
+	RegisterInflectorTransform(loader, "inflector_to_screamingsnake_case", cruet_to_screamingsnake_case,
+	                           "Converts a string to SCREAMING_SNAKE_CASE format",
+	                           "inflector_to_screamingsnake_case('helloWorld')", "text", {"text", "case_conversion"});
+	RegisterInflectorTransform(loader, "inflector_to_snake_case", cruet_to_snake_case,
+	                           "Converts a string to snake_case format",
+	                           "inflector_to_snake_case('helloWorld')", "text", {"text", "case_conversion"});
+	RegisterInflectorTransform(loader, "inflector_to_kebab_case", cruet_to_kebab_case,
+	                           "Converts a string to kebab-case format",
+	                           "inflector_to_kebab_case('helloWorld')", "text", {"text", "case_conversion"});
+	RegisterInflectorTransform(loader, "inflector_to_train_case", cruet_to_train_case,
+	                           "Converts a string to Train-Case format",
+	                           "inflector_to_train_case('helloWorld')", "text", {"text", "case_conversion"});
+	RegisterInflectorTransform(loader, "inflector_to_sentence_case", cruet_to_sentence_case,
+	                           "Converts a string to Sentence case format",
+	                           "inflector_to_sentence_case('helloWorld')", "text", {"text", "case_conversion"});
+	RegisterInflectorTransform(loader, "inflector_to_title_case", cruet_to_title_case,
+	                           "Converts a string to Title Case format",
+	                           "inflector_to_title_case('hello_world')", "text", {"text", "case_conversion"});
 
-	// Predicate functions
-	RegisterInflectorPredicate(loader, "inflector_is_class_case", cruet_is_class_case);
-	RegisterInflectorPredicate(loader, "inflector_is_camel_case", cruet_is_camel_case);
-	RegisterInflectorPredicate(loader, "inflector_is_pascal_case", cruet_is_pascal_case);
-	RegisterInflectorPredicate(loader, "inflector_is_screamingsnake_case", cruet_is_screamingsnake_case);
-	RegisterInflectorPredicate(loader, "inflector_is_snake_case", cruet_is_snake_case);
-	RegisterInflectorPredicate(loader, "inflector_is_kebab_case", cruet_is_kebab_case);
-	RegisterInflectorPredicate(loader, "inflector_is_train_case", cruet_is_train_case);
-	RegisterInflectorPredicate(loader, "inflector_is_sentence_case", cruet_is_sentence_case);
-	RegisterInflectorPredicate(loader, "inflector_is_title_case", cruet_is_title_case);
-	RegisterInflectorPredicate(loader, "inflector_is_table_case", cruet_is_table_case);
-	RegisterInflectorPredicate(loader, "inflector_is_foreign_key", cruet_is_foreign_key);
+	// Transform functions - naming conventions
+	RegisterInflectorTransform(loader, "inflector_to_table_case", cruet_to_table_case,
+	                           "Converts a string to table_cases format (snake_case plural)",
+	                           "inflector_to_table_case('FooBar')", "text", {"text", "naming"});
+	RegisterInflectorTransform(loader, "inflector_to_foreign_key", cruet_to_foreign_key,
+	                           "Converts a class name to a foreign key column name",
+	                           "inflector_to_foreign_key('Message')", "class_name", {"text", "naming"});
+	RegisterInflectorTransform(loader, "inflector_demodulize", cruet_demodulize,
+	                           "Removes the module part from a fully qualified name",
+	                           "inflector_demodulize('ActiveRecord::CoreExtensions::String')", "qualified_name", {"text", "naming"});
+	RegisterInflectorTransform(loader, "inflector_deconstantize", cruet_deconstantize,
+	                           "Removes the rightmost segment from a constant expression",
+	                           "inflector_deconstantize('Net::HTTP')", "constant", {"text", "naming"});
 
+	// Transform functions - inflection
+	RegisterInflectorTransform(loader, "inflector_ordinalize", cruet_ordinalize,
+	                           "Converts a number string to its ordinal form (1st, 2nd, 3rd, etc.)",
+	                           "inflector_ordinalize('1')", "number", {"text", "inflection"});
+	RegisterInflectorTransform(loader, "inflector_deordinalize", cruet_deordinalize,
+	                           "Removes the ordinal suffix from a string (1st -> 1)",
+	                           "inflector_deordinalize('1st')", "ordinal", {"text", "inflection"});
+	RegisterInflectorTransform(loader, "inflector_to_plural", cruet_to_plural,
+	                           "Returns the plural form of a word",
+	                           "inflector_to_plural('person')", "word", {"text", "inflection"});
+	RegisterInflectorTransform(loader, "inflector_to_singular", cruet_to_singular,
+	                           "Returns the singular form of a word",
+	                           "inflector_to_singular('people')", "word", {"text", "inflection"});
+
+	// Predicate functions - case detection
+	RegisterInflectorPredicate(loader, "inflector_is_class_case", cruet_is_class_case,
+	                           "Returns true if the string is in ClassCase (PascalCase) format",
+	                           "inflector_is_class_case('HelloWorld')", "text", {"text", "case_detection"});
+	RegisterInflectorPredicate(loader, "inflector_is_camel_case", cruet_is_camel_case,
+	                           "Returns true if the string is in camelCase format",
+	                           "inflector_is_camel_case('helloWorld')", "text", {"text", "case_detection"});
+	RegisterInflectorPredicate(loader, "inflector_is_pascal_case", cruet_is_pascal_case,
+	                           "Returns true if the string is in PascalCase format",
+	                           "inflector_is_pascal_case('HelloWorld')", "text", {"text", "case_detection"});
+	RegisterInflectorPredicate(loader, "inflector_is_screamingsnake_case", cruet_is_screamingsnake_case,
+	                           "Returns true if the string is in SCREAMING_SNAKE_CASE format",
+	                           "inflector_is_screamingsnake_case('HELLO_WORLD')", "text", {"text", "case_detection"});
+	RegisterInflectorPredicate(loader, "inflector_is_snake_case", cruet_is_snake_case,
+	                           "Returns true if the string is in snake_case format",
+	                           "inflector_is_snake_case('hello_world')", "text", {"text", "case_detection"});
+	RegisterInflectorPredicate(loader, "inflector_is_kebab_case", cruet_is_kebab_case,
+	                           "Returns true if the string is in kebab-case format",
+	                           "inflector_is_kebab_case('hello-world')", "text", {"text", "case_detection"});
+	RegisterInflectorPredicate(loader, "inflector_is_train_case", cruet_is_train_case,
+	                           "Returns true if the string is in Train-Case format",
+	                           "inflector_is_train_case('Hello-World')", "text", {"text", "case_detection"});
+	RegisterInflectorPredicate(loader, "inflector_is_sentence_case", cruet_is_sentence_case,
+	                           "Returns true if the string is in Sentence case format",
+	                           "inflector_is_sentence_case('Hello world')", "text", {"text", "case_detection"});
+	RegisterInflectorPredicate(loader, "inflector_is_title_case", cruet_is_title_case,
+	                           "Returns true if the string is in Title Case format",
+	                           "inflector_is_title_case('Hello World')", "text", {"text", "case_detection"});
+
+	// Predicate functions - naming detection
+	RegisterInflectorPredicate(loader, "inflector_is_table_case", cruet_is_table_case,
+	                           "Returns true if the string is in table_case format (snake_case plural)",
+	                           "inflector_is_table_case('foo_bars')", "text", {"text", "naming"});
+	RegisterInflectorPredicate(loader, "inflector_is_foreign_key", cruet_is_foreign_key,
+	                           "Returns true if the string is in foreign key format (ends with _id)",
+	                           "inflector_is_foreign_key('message_id')", "text", {"text", "naming"});
+
+	// Table function: inflect column names in query results
 	auto inflect_table_function =
 	    TableFunction("inflect", {LogicalType::VARCHAR, LogicalType::TABLE}, nullptr, InflectTableBind);
 	inflect_table_function.in_out_function = InflectInOut;
 	inflect_table_function.in_out_function_final = InflectInOutFinalize;
-	loader.RegisterFunction(inflect_table_function);
+	CreateTableFunctionInfo table_func_info(inflect_table_function);
+	FunctionDescription table_func_desc;
+	table_func_desc.description = "Transforms column names in query results using the specified case format";
+	table_func_desc.examples.push_back("FROM inflect('snake', SELECT firstName, lastName FROM users)");
+	table_func_desc.parameter_names.push_back("format");
+	table_func_desc.parameter_names.push_back("query");
+	table_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
+	table_func_desc.parameter_types.push_back(LogicalType::TABLE);
+	table_func_desc.categories.push_back("text");
+	table_func_desc.categories.push_back("case_conversion");
+	table_func_info.descriptions.push_back(std::move(table_func_desc));
+	loader.RegisterFunction(table_func_info);
 
-	// Now need a scalar function that will inflect a struct type.
+	// Scalar functions: inflect string values or struct field names
 	auto scalar_function_set = ScalarFunctionSet("inflect");
 	auto inflect_string_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                              LogicalType::VARCHAR, InflectStringFunc);
@@ -332,7 +443,33 @@ void LoadInternal(ExtensionLoader &loader) {
 	                                              InflectScalarFunc, InflectScalarBind);
 	scalar_function_set.AddFunction(inflect_struct_function);
 
-	loader.RegisterFunction(scalar_function_set);
+	CreateScalarFunctionInfo scalar_func_info(scalar_function_set);
+
+	// Description for string variant
+	FunctionDescription string_func_desc;
+	string_func_desc.description = "Transforms a string value using the specified case format";
+	string_func_desc.examples.push_back("inflect('snake', 'helloWorld')");
+	string_func_desc.parameter_names.push_back("format");
+	string_func_desc.parameter_names.push_back("text");
+	string_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
+	string_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
+	string_func_desc.categories.push_back("text");
+	string_func_desc.categories.push_back("case_conversion");
+	scalar_func_info.descriptions.push_back(std::move(string_func_desc));
+
+	// Description for struct variant
+	FunctionDescription struct_func_desc;
+	struct_func_desc.description = "Transforms struct field names using the specified case format";
+	struct_func_desc.examples.push_back("inflect('snake', {firstName: 'John', lastName: 'Doe'})");
+	struct_func_desc.parameter_names.push_back("format");
+	struct_func_desc.parameter_names.push_back("value");
+	struct_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
+	struct_func_desc.parameter_types.push_back(LogicalType::ANY);
+	struct_func_desc.categories.push_back("struct");
+	struct_func_desc.categories.push_back("case_conversion");
+	scalar_func_info.descriptions.push_back(std::move(struct_func_desc));
+
+	loader.RegisterFunction(scalar_func_info);
 
 	QueryFarmSendTelemetry(loader, "inflector", "2025110901");
 }
@@ -345,7 +482,7 @@ std::string InflectorExtension::Name() {
 }
 
 std::string InflectorExtension::Version() const {
-	return "2025110801";
+	return "2025121001";
 }
 
 } // namespace duckdb
