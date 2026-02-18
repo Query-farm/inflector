@@ -67,7 +67,7 @@ Transform a string to a specific case style:
 - `inflector_to_upper_case(str)` → `UPPERCASE`
 - `inflector_to_lower_case(str)` → `lowercase`
 
-You can also use the funciton `inflect(case_name, value)`,
+You can also use the function `inflect(case_name, value)`,
 
 **Examples:**
 ```sql
