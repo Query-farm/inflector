@@ -9,6 +9,23 @@
 
 extern "C" {
 /**
+ * Set acronyms from a comma-separated string. Tokens are uppercased.
+ * Single-character tokens are silently ignored (minimum 2 chars).
+ */
+void cruet_set_acronyms(const char *csv);
+
+/**
+ * Get the current acronyms as a sorted comma-separated string.
+ * Caller must free the returned string with `free_c_string`.
+ */
+char *cruet_get_acronyms(void);
+
+/**
+ * Clear all configured acronyms, restoring default behavior.
+ */
+void cruet_clear_acronyms(void);
+
+/**
  * Free a single C string returned by the transform functions
  */
 void free_c_string(char *s);

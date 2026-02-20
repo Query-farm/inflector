@@ -414,3 +414,179 @@ query T
 SELECT inflector_is_snake_case('start15min');
 ----
 false
+
+# ============================================================
+# Test acronym handling
+# ============================================================
+
+# Initially no acronyms configured
+query T
+SELECT inflector_get_acronyms();
+----
+(empty)
+
+# Set acronyms and verify sorted CSV is returned
+query T
+SELECT inflector_set_acronyms('HTML,API,URL,JSON');
+----
+API,HTML,JSON,URL
+
+# Verify get returns the same
+query T
+SELECT inflector_get_acronyms();
+----
+API,HTML,JSON,URL
+
+# PascalCase with acronyms
+query T
+SELECT inflector_to_pascal_case('html_parser');
+----
+HTMLParser
+
+query T
+SELECT inflector_to_pascal_case('parse_html_document');
+----
+ParseHTMLDocument
+
+# class_case is the same as PascalCase
+query T
+SELECT inflector_to_class_case('html_parser');
+----
+HTMLParser
+
+# camelCase with acronyms - first word always lowercase
+query T
+SELECT inflector_to_camel_case('html_parser');
+----
+htmlParser
+
+query T
+SELECT inflector_to_camel_case('parse_html');
+----
+parseHTML
+
+query T
+SELECT inflector_to_camel_case('get_api_url');
+----
+getAPIURL
+
+# Title Case with acronyms
+query T
+SELECT inflector_to_title_case('html_parser');
+----
+HTML Parser
+
+# Train-Case with acronyms
+query T
+SELECT inflector_to_train_case('html_parser');
+----
+HTML-Parser
+
+# Sentence case with acronyms
+query T
+SELECT inflector_to_sentence_case('html_parser');
+----
+HTML parser
+
+query T
+SELECT inflector_to_sentence_case('parse_html_document');
+----
+Parse HTML document
+
+# Snake/kebab/screaming_snake are unaffected by acronyms
+query T
+SELECT inflector_to_snake_case('HTMLParser');
+----
+html_parser
+
+query T
+SELECT inflector_to_kebab_case('HTMLParser');
+----
+html-parser
+
+query T
+SELECT inflector_to_screamingsnake_case('html_parser');
+----
+HTML_PARSER
+
+# Predicates with acronyms set
+query T
+SELECT inflector_is_pascal_case('HTMLParser');
+----
+true
+
+query T
+SELECT inflector_is_pascal_case('HtmlParser');
+----
+false
+
+query T
+SELECT inflector_is_camel_case('parseHTML');
+----
+true
+
+query T
+SELECT inflector_is_camel_case('parseHtml');
+----
+false
+
+query T
+SELECT inflector_is_title_case('HTML Parser');
+----
+true
+
+query T
+SELECT inflector_is_train_case('HTML-Parser');
+----
+true
+
+query T
+SELECT inflector_is_sentence_case('HTML parser');
+----
+true
+
+# inflect() function with structs and acronyms
+query T
+SELECT inflect('pascal', {'html_parser': 1});
+----
+{'HTMLParser': 1}
+
+query T
+SELECT inflect('camel', {'html_parser': 1, 'api_url': 2});
+----
+{'htmlParser': 1, 'apiURL': 2}
+
+# Acronym is the entire input
+query T
+SELECT inflector_to_pascal_case('api');
+----
+API
+
+# Single-char tokens in set_acronyms are silently ignored
+query T
+SELECT inflector_set_acronyms('HTML,A,API');
+----
+API,HTML
+
+# Clear acronyms
+query T
+SELECT inflector_clear_acronyms();
+----
+Acronyms cleared
+
+# Verify cleared
+query T
+SELECT inflector_get_acronyms();
+----
+(empty)
+
+# After clear: default behavior restored
+query T
+SELECT inflector_to_pascal_case('html_parser');
+----
+HtmlParser
+
+query T
+SELECT inflector_is_pascal_case('HtmlParser');
+----
+true

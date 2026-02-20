@@ -90,6 +90,7 @@ using TransformFunc = char *(*)(const char *);
 static unordered_map<string, TransformFunc> transformer_map = {
     {"camel", cruet_to_camel_case},       {"camel_case", cruet_to_camel_case},
     {"class", cruet_to_class_case},       {"class_case", cruet_to_class_case},
+    {"pascal", cruet_to_pascal_case},     {"pascal_case", cruet_to_pascal_case},
     {"snake", cruet_to_snake_case},       {"snake_case", cruet_to_snake_case},
     {"kebab", cruet_to_kebab_case},       {"kebab_case", cruet_to_kebab_case},
     {"train", cruet_to_train_case},       {"train_case", cruet_to_train_case},
@@ -111,7 +112,7 @@ static unique_ptr<FunctionData> InflectTableBind(ClientContext &context, TableFu
 
 	auto it = transformer_map.find(function_name);
 	if (it == transformer_map.end()) {
-		throw InvalidInputException("Unknown inflection '%s'. Supported: camel, class, snake, kebab, train, title, "
+		throw InvalidInputException("Unknown inflection '%s'. Supported: camel, class, pascal, snake, kebab, train, title, "
 		                            "table, sentence, upper, lower",
 		                            function_name.c_str());
 	}
@@ -251,7 +252,7 @@ unique_ptr<FunctionData> InflectScalarBind(ClientContext &context, ScalarFunctio
 	// The format name need to be constant.
 	auto it = transformer_map.find(function_name);
 	if (it == transformer_map.end()) {
-		throw InvalidInputException("Unknown inflection '%s'. Supported: camel, class, snake, kebab, train, title, "
+		throw InvalidInputException("Unknown inflection '%s'. Supported: camel, class, pascal, snake, kebab, train, title, "
 		                            "table, sentence, upper, lower",
 		                            function_name.c_str());
 	}
@@ -470,6 +471,76 @@ void LoadInternal(ExtensionLoader &loader) {
 	scalar_func_info.descriptions.push_back(std::move(struct_func_desc));
 
 	loader.RegisterFunction(scalar_func_info);
+
+	// --- Acronym management functions ---
+
+	// inflector_set_acronyms(VARCHAR) → VARCHAR
+	auto set_acronyms_impl = [](DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &csv_vector = args.data[0];
+		UnaryExecutor::Execute<string_t, string_t>(
+		    csv_vector, result, args.size(), [&result](string_t csv) -> string_t {
+			    auto value = csv.GetString();
+			    cruet_set_acronyms(value.c_str());
+			    char *acronym_result = cruet_get_acronyms();
+			    if (!acronym_result) {
+				    throw InternalException("cruet_get_acronyms returned null");
+			    }
+			    string_t return_result = StringVector::AddString(result, acronym_result);
+			    free_c_string(acronym_result);
+			    return return_result;
+		    });
+	};
+	ScalarFunction set_func("inflector_set_acronyms", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                        set_acronyms_impl);
+	CreateScalarFunctionInfo set_info(set_func);
+	FunctionDescription set_desc;
+	set_desc.description = "Configures acronyms that are preserved as uppercase in case conversions (e.g., HTML, API). "
+	                       "Returns the normalized sorted list.";
+	set_desc.examples.push_back("inflector_set_acronyms('HTML,API,URL')");
+	set_desc.parameter_names.push_back("acronyms_csv");
+	set_desc.parameter_types.push_back(LogicalType::VARCHAR);
+	set_desc.categories.push_back("text");
+	set_desc.categories.push_back("configuration");
+	set_info.descriptions.push_back(std::move(set_desc));
+	loader.RegisterFunction(set_info);
+
+	// inflector_get_acronyms() → VARCHAR
+	auto get_acronyms_impl = [](DataChunk &args, ExpressionState &state, Vector &result) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		char *acronym_result = cruet_get_acronyms();
+		if (!acronym_result) {
+			throw InternalException("cruet_get_acronyms returned null");
+		}
+		auto result_data = ConstantVector::GetData<string_t>(result);
+		result_data[0] = StringVector::AddString(result, acronym_result);
+		free_c_string(acronym_result);
+	};
+	ScalarFunction get_func("inflector_get_acronyms", {}, LogicalType::VARCHAR, get_acronyms_impl);
+	CreateScalarFunctionInfo get_info(get_func);
+	FunctionDescription get_desc;
+	get_desc.description = "Returns the currently configured acronyms as a sorted comma-separated string";
+	get_desc.examples.push_back("inflector_get_acronyms()");
+	get_desc.categories.push_back("text");
+	get_desc.categories.push_back("configuration");
+	get_info.descriptions.push_back(std::move(get_desc));
+	loader.RegisterFunction(get_info);
+
+	// inflector_clear_acronyms() → VARCHAR
+	auto clear_acronyms_impl = [](DataChunk &args, ExpressionState &state, Vector &result) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		cruet_clear_acronyms();
+		auto result_data = ConstantVector::GetData<string_t>(result);
+		result_data[0] = StringVector::AddString(result, "Acronyms cleared");
+	};
+	ScalarFunction clear_func("inflector_clear_acronyms", {}, LogicalType::VARCHAR, clear_acronyms_impl);
+	CreateScalarFunctionInfo clear_info(clear_func);
+	FunctionDescription clear_desc;
+	clear_desc.description = "Clears all configured acronyms, restoring default case conversion behavior";
+	clear_desc.examples.push_back("inflector_clear_acronyms()");
+	clear_desc.categories.push_back("text");
+	clear_desc.categories.push_back("configuration");
+	clear_info.descriptions.push_back(std::move(clear_desc));
+	loader.RegisterFunction(clear_info);
 
 	QueryFarmSendTelemetry(loader, "inflector", "2025110901");
 }
