@@ -1,8 +1,175 @@
+use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uchar};
 use std::ptr;
+use std::sync::{OnceLock, RwLock};
 
 use convert_case::{Case, Casing};
+
+// --- Global acronym storage ---
+
+fn acronyms() -> &'static RwLock<HashSet<String>> {
+    static ACRONYMS: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
+    ACRONYMS.get_or_init(|| RwLock::new(HashSet::new()))
+}
+
+/// Set acronyms from a comma-separated string. Tokens are uppercased.
+/// Single-character tokens are silently ignored (minimum 2 chars).
+#[no_mangle]
+pub extern "C" fn cruet_set_acronyms(csv: *const c_char) {
+    if csv.is_null() {
+        return;
+    }
+    let s = unsafe { CStr::from_ptr(csv).to_str().unwrap() };
+    let mut set = HashSet::new();
+    for token in s.split(',') {
+        let trimmed = token.trim().to_uppercase();
+        if trimmed.len() >= 2 {
+            set.insert(trimmed);
+        }
+    }
+    *acronyms().write().unwrap() = set;
+}
+
+/// Get the current acronyms as a sorted comma-separated string.
+/// Caller must free the returned string with `free_c_string`.
+#[no_mangle]
+pub extern "C" fn cruet_get_acronyms() -> *mut c_char {
+    let set = acronyms().read().unwrap();
+    let mut sorted: Vec<&String> = set.iter().collect();
+    sorted.sort();
+    let csv = sorted
+        .into_iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    CString::new(csv).unwrap().into_raw()
+}
+
+/// Clear all configured acronyms, restoring default behavior.
+#[no_mangle]
+pub extern "C" fn cruet_clear_acronyms() {
+    acronyms().write().unwrap().clear();
+}
+
+// --- Acronym-aware case conversion ---
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => {
+            let mut result = c.to_uppercase().to_string();
+            result.push_str(chars.as_str());
+            result
+        }
+    }
+}
+
+fn convert_with_acronyms(input: &str, case: Case) -> String {
+    let acros = acronyms().read().unwrap();
+
+    if acros.is_empty() {
+        return input.to_case(case);
+    }
+
+    match case {
+        // Acronyms don't affect all-lowercase or all-uppercase output
+        Case::Snake | Case::Kebab | Case::Lower | Case::UpperSnake | Case::Upper | Case::Flat
+        | Case::UpperFlat => input.to_case(case),
+
+        Case::Pascal => {
+            let snake = input.to_case(Case::Snake);
+            snake
+                .split('_')
+                .map(|w| {
+                    let upper = w.to_uppercase();
+                    if acros.contains(&upper) {
+                        upper
+                    } else {
+                        capitalize(w)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        }
+
+        Case::Camel => {
+            let snake = input.to_case(Case::Snake);
+            snake
+                .split('_')
+                .enumerate()
+                .map(|(i, w)| {
+                    if i == 0 {
+                        w.to_lowercase()
+                    } else {
+                        let upper = w.to_uppercase();
+                        if acros.contains(&upper) {
+                            upper
+                        } else {
+                            capitalize(w)
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        }
+
+        Case::Title => {
+            let snake = input.to_case(Case::Snake);
+            snake
+                .split('_')
+                .map(|w| {
+                    let upper = w.to_uppercase();
+                    if acros.contains(&upper) {
+                        upper
+                    } else {
+                        capitalize(w)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+
+        Case::Train => {
+            let snake = input.to_case(Case::Snake);
+            snake
+                .split('_')
+                .map(|w| {
+                    let upper = w.to_uppercase();
+                    if acros.contains(&upper) {
+                        upper
+                    } else {
+                        capitalize(w)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("-")
+        }
+
+        Case::Sentence => {
+            let snake = input.to_case(Case::Snake);
+            snake
+                .split('_')
+                .enumerate()
+                .map(|(i, w)| {
+                    let upper = w.to_uppercase();
+                    if acros.contains(&upper) {
+                        upper
+                    } else if i == 0 {
+                        capitalize(w)
+                    } else {
+                        w.to_lowercase()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+
+        // Default fallback for any other cases
+        _ => input.to_case(case),
+    }
+}
 
 /// --- Transform single string ---
 /// Returns a newly allocated C string (caller must free)
@@ -67,39 +234,39 @@ fn to_foreign_key(s: &str) -> String {
 // --- Transform wrappers ---
 #[no_mangle]
 pub extern "C" fn cruet_to_class_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::Pascal))
+    transform_single(s, |s| convert_with_acronyms(s, Case::Pascal))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_camel_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::Camel))
+    transform_single(s, |s| convert_with_acronyms(s, Case::Camel))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_pascal_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::Pascal))
+    transform_single(s, |s| convert_with_acronyms(s, Case::Pascal))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_screamingsnake_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::UpperSnake))
+    transform_single(s, |s| convert_with_acronyms(s, Case::UpperSnake))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_snake_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::Snake))
+    transform_single(s, |s| convert_with_acronyms(s, Case::Snake))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_kebab_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::Kebab))
+    transform_single(s, |s| convert_with_acronyms(s, Case::Kebab))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_train_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::Train))
+    transform_single(s, |s| convert_with_acronyms(s, Case::Train))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_sentence_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::Sentence))
+    transform_single(s, |s| convert_with_acronyms(s, Case::Sentence))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_title_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, |s| s.to_case(Case::Title))
+    transform_single(s, |s| convert_with_acronyms(s, Case::Title))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_lower_case(s: *const c_char) -> *mut c_char {
@@ -146,39 +313,39 @@ pub extern "C" fn cruet_to_singular(s: *const c_char) -> *mut c_char {
 // --- Predicate wrappers ---
 #[no_mangle]
 pub extern "C" fn cruet_is_class_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::Pascal) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::Pascal) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_camel_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::Camel) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::Camel) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_pascal_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::Pascal) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::Pascal) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_screamingsnake_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::UpperSnake) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::UpperSnake) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_snake_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::Snake) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::Snake) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_kebab_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::Kebab) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::Kebab) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_train_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::Train) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::Train) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_sentence_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::Sentence) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::Sentence) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_title_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, |s| s.to_case(Case::Title) == s)
+    predicate_single(s, |s| convert_with_acronyms(s, Case::Title) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_table_case(s: *const c_char) -> c_uchar {

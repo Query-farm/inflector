@@ -343,6 +343,56 @@ SELECT
   inflector_to_title_case('first_name') as label;  -- First Name
 ```
 
+## Acronym Handling
+
+By default, case conversions capitalize words normally (e.g., `html_parser` → `HtmlParser`). You can configure acronyms so they are preserved as fully uppercase in output styles where it matters (PascalCase, camelCase, Title Case, Train-Case, Sentence case).
+
+### Configuration Functions
+
+- `inflector_set_acronyms(csv)` — Configure acronyms from a comma-separated string. Returns the normalized sorted list.
+- `inflector_get_acronyms()` — Returns the currently configured acronyms.
+- `inflector_clear_acronyms()` — Clears all acronyms, restoring default behavior.
+
+Single-character tokens are silently ignored (minimum 2 characters).
+
+```sql
+-- Configure acronyms
+SELECT inflector_set_acronyms('HTML,API,URL,JSON');
+-- → API,HTML,JSON,URL
+
+-- Now conversions preserve acronyms in output
+SELECT inflector_to_pascal_case('html_parser');     -- → HTMLParser
+SELECT inflector_to_camel_case('parse_html');       -- → parseHTML
+SELECT inflector_to_title_case('html_parser');      -- → HTML Parser
+SELECT inflector_to_train_case('html_parser');      -- → HTML-Parser
+SELECT inflector_to_sentence_case('html_parser');   -- → HTML parser
+
+-- Cases that produce all-lowercase or all-uppercase output are unaffected
+SELECT inflector_to_snake_case('HTMLParser');        -- → html_parser
+SELECT inflector_to_kebab_case('HTMLParser');        -- → html-parser
+
+-- Predicates respect acronym configuration
+SELECT inflector_is_pascal_case('HTMLParser');       -- → true
+SELECT inflector_is_pascal_case('HtmlParser');       -- → false
+
+-- Works with struct inflection too
+SELECT inflect('pascal', {'html_parser': 1});       -- → {'HTMLParser': 1}
+
+-- Check current acronyms
+SELECT inflector_get_acronyms();    -- → API,HTML,JSON,URL
+
+-- Clear and restore default behavior
+SELECT inflector_clear_acronyms();
+SELECT inflector_to_pascal_case('html_parser');      -- → HtmlParser
+```
+
+### Behavior Notes
+
+- **First word in camelCase** is always lowercase, even if it's an acronym: `html_parser` → `htmlParser`
+- **Sentence case** capitalizes the first word (or uppercases if acronym), rest lowercase except acronyms
+- **Snake, kebab, screaming_snake** output is unaffected since those styles don't use mixed case
+- **Thread-safe**: Acronym configuration uses a read-write lock for concurrent access
+
 ## Advanced Usage
 
 ### Nested Struct Transformation
