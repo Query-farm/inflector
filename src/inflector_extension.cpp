@@ -80,7 +80,6 @@ struct InflectBindData : public FunctionData {
 		return make_uniq<InflectBindData>();
 	}
 	bool Equals(const FunctionData &other_p) const override {
-		//		auto &other = other_p.Cast<CollectBindData>();
 		return true;
 	}
 };
@@ -88,7 +87,7 @@ struct InflectBindData : public FunctionData {
 // Mapping from function name -> cruet transformer
 using TransformFunc = char *(*)(const char *);
 
-static unordered_map<string, TransformFunc> transformer_map = {
+static const unordered_map<string, TransformFunc> transformer_map = {
     {"camel", cruet_to_camel_case},       {"camel_case", cruet_to_camel_case},
     {"class", cruet_to_class_case},       {"class_case", cruet_to_class_case},
     {"pascal", cruet_to_pascal_case},     {"pascal_case", cruet_to_pascal_case},
@@ -277,7 +276,7 @@ void InflectStringFunc(DataChunk &args, ExpressionState &state, Vector &result) 
 		    auto it = transformer_map.find(function_name);
 		    if (it == transformer_map.end()) {
 			    throw InvalidInputException(
-			        "Unknown inflection '%s'. Supported: camel, class, snake, kebab, train, title, "
+			        "Unknown inflection '%s'. Supported: camel, class, pascal, snake, kebab, train, title, "
 			        "table, sentence, upper, lower",
 			        function_name.c_str());
 		    }
