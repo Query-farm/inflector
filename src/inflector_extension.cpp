@@ -4,6 +4,7 @@
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/function/scalar_function.hpp"
+#include "duckdb/main/config.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_function_info.hpp>
 #include "rust.h"
@@ -472,75 +473,28 @@ void LoadInternal(ExtensionLoader &loader) {
 
 	loader.RegisterFunction(scalar_func_info);
 
-	// --- Acronym management functions ---
-
-	// inflector_set_acronyms(VARCHAR) → VARCHAR
-	auto set_acronyms_impl = [](DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &csv_vector = args.data[0];
-		UnaryExecutor::Execute<string_t, string_t>(
-		    csv_vector, result, args.size(), [&result](string_t csv) -> string_t {
-			    auto value = csv.GetString();
-			    cruet_set_acronyms(value.c_str());
-			    char *acronym_result = cruet_get_acronyms();
-			    if (!acronym_result) {
-				    throw InternalException("cruet_get_acronyms returned null");
+	// --- Acronym configuration via DuckDB setting ---
+	auto &db = loader.GetDatabaseInstance();
+	auto &config = DBConfig::GetConfig(db);
+	config.AddExtensionOption(
+	    "inflector_acronyms",
+	    "List of acronyms preserved as uppercase in case conversions (e.g., HTML, API)",
+	    LogicalType::LIST(LogicalType::VARCHAR), Value::LIST(LogicalType::VARCHAR, vector<Value>()),
+	    [](ClientContext &context, SetScope scope, Value &parameter) {
+		    if (parameter.IsNull() || ListValue::GetChildren(parameter).empty()) {
+			    cruet_clear_acronyms();
+			    return;
+		    }
+		    auto &children = ListValue::GetChildren(parameter);
+		    string csv;
+		    for (idx_t i = 0; i < children.size(); i++) {
+			    if (i > 0) {
+				    csv += ",";
 			    }
-			    string_t return_result = StringVector::AddString(result, acronym_result);
-			    free_c_string(acronym_result);
-			    return return_result;
-		    });
-	};
-	ScalarFunction set_func("inflector_set_acronyms", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
-	                        set_acronyms_impl);
-	CreateScalarFunctionInfo set_info(set_func);
-	FunctionDescription set_desc;
-	set_desc.description = "Configures acronyms that are preserved as uppercase in case conversions (e.g., HTML, API). "
-	                       "Returns the normalized sorted list.";
-	set_desc.examples.push_back("inflector_set_acronyms('HTML,API,URL')");
-	set_desc.parameter_names.push_back("acronyms_csv");
-	set_desc.parameter_types.push_back(LogicalType::VARCHAR);
-	set_desc.categories.push_back("text");
-	set_desc.categories.push_back("configuration");
-	set_info.descriptions.push_back(std::move(set_desc));
-	loader.RegisterFunction(set_info);
-
-	// inflector_get_acronyms() → VARCHAR
-	auto get_acronyms_impl = [](DataChunk &args, ExpressionState &state, Vector &result) {
-		result.SetVectorType(VectorType::CONSTANT_VECTOR);
-		char *acronym_result = cruet_get_acronyms();
-		if (!acronym_result) {
-			throw InternalException("cruet_get_acronyms returned null");
-		}
-		auto result_data = ConstantVector::GetData<string_t>(result);
-		result_data[0] = StringVector::AddString(result, acronym_result);
-		free_c_string(acronym_result);
-	};
-	ScalarFunction get_func("inflector_get_acronyms", {}, LogicalType::VARCHAR, get_acronyms_impl);
-	CreateScalarFunctionInfo get_info(get_func);
-	FunctionDescription get_desc;
-	get_desc.description = "Returns the currently configured acronyms as a sorted comma-separated string";
-	get_desc.examples.push_back("inflector_get_acronyms()");
-	get_desc.categories.push_back("text");
-	get_desc.categories.push_back("configuration");
-	get_info.descriptions.push_back(std::move(get_desc));
-	loader.RegisterFunction(get_info);
-
-	// inflector_clear_acronyms() → VARCHAR
-	auto clear_acronyms_impl = [](DataChunk &args, ExpressionState &state, Vector &result) {
-		result.SetVectorType(VectorType::CONSTANT_VECTOR);
-		cruet_clear_acronyms();
-		auto result_data = ConstantVector::GetData<string_t>(result);
-		result_data[0] = StringVector::AddString(result, "Acronyms cleared");
-	};
-	ScalarFunction clear_func("inflector_clear_acronyms", {}, LogicalType::VARCHAR, clear_acronyms_impl);
-	CreateScalarFunctionInfo clear_info(clear_func);
-	FunctionDescription clear_desc;
-	clear_desc.description = "Clears all configured acronyms, restoring default case conversion behavior";
-	clear_desc.examples.push_back("inflector_clear_acronyms()");
-	clear_desc.categories.push_back("text");
-	clear_desc.categories.push_back("configuration");
-	clear_info.descriptions.push_back(std::move(clear_desc));
-	loader.RegisterFunction(clear_info);
+			    csv += children[i].GetValue<string>();
+		    }
+		    cruet_set_acronyms(csv.c_str());
+	    });
 
 	QueryFarmSendTelemetry(loader, "inflector", "2025110901");
 }

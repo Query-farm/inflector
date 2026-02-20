@@ -347,18 +347,13 @@ SELECT
 
 By default, case conversions capitalize words normally (e.g., `html_parser` → `HtmlParser`). You can configure acronyms so they are preserved as fully uppercase in output styles where it matters (PascalCase, camelCase, Title Case, Train-Case, Sentence case).
 
-### Configuration Functions
+### Configuration
 
-- `inflector_set_acronyms(csv)` — Configure acronyms from a comma-separated string. Returns the normalized sorted list.
-- `inflector_get_acronyms()` — Returns the currently configured acronyms.
-- `inflector_clear_acronyms()` — Clears all acronyms, restoring default behavior.
-
-Single-character tokens are silently ignored (minimum 2 characters).
+Acronyms are configured via the `inflector_acronyms` DuckDB setting:
 
 ```sql
 -- Configure acronyms
-SELECT inflector_set_acronyms('HTML,API,URL,JSON');
--- → API,HTML,JSON,URL
+SET inflector_acronyms = ['HTML', 'API', 'URL', 'JSON'];
 
 -- Now conversions preserve acronyms in output
 SELECT inflector_to_pascal_case('html_parser');     -- → HTMLParser
@@ -378,13 +373,12 @@ SELECT inflector_is_pascal_case('HtmlParser');       -- → false
 -- Works with struct inflection too
 SELECT inflect('pascal', {'html_parser': 1});       -- → {'HTMLParser': 1}
 
--- Check current acronyms
-SELECT inflector_get_acronyms();    -- → API,HTML,JSON,URL
-
 -- Clear and restore default behavior
-SELECT inflector_clear_acronyms();
+RESET inflector_acronyms;
 SELECT inflector_to_pascal_case('html_parser');      -- → HtmlParser
 ```
+
+Single-character tokens are silently ignored (minimum 2 characters).
 
 ### Behavior Notes
 

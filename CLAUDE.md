@@ -8,16 +8,18 @@ This is **Inflector**, a DuckDB extension that provides string case transformati
 
 ## Build Commands
 
+**Always use `GEN=ninja` when building.**
+
 ```bash
 # Build release version
-make release
+make release GEN=ninja
 
 # Build debug version
-make debug
+make debug GEN=ninja
 
 # Run tests (uses SQLLogicTests)
-make test           # runs release tests
-make test_debug     # runs debug tests
+make test GEN=ninja          # runs release tests
+make test_debug GEN=ninja    # runs debug tests
 
 # Format code
 make format
