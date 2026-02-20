@@ -419,23 +419,9 @@ false
 # Test acronym handling
 # ============================================================
 
-# Initially no acronyms configured
-query T
-SELECT inflector_get_acronyms();
-----
-(empty)
-
-# Set acronyms and verify sorted CSV is returned
-query T
-SELECT inflector_set_acronyms('HTML,API,URL,JSON');
-----
-API,HTML,JSON,URL
-
-# Verify get returns the same
-query T
-SELECT inflector_get_acronyms();
-----
-API,HTML,JSON,URL
+# Set acronyms via DuckDB setting
+statement ok
+SET inflector_acronyms = ['HTML', 'API', 'URL', 'JSON'];
 
 # PascalCase with acronyms
 query T
@@ -562,23 +548,13 @@ SELECT inflector_to_pascal_case('api');
 ----
 API
 
-# Single-char tokens in set_acronyms are silently ignored
-query T
-SELECT inflector_set_acronyms('HTML,A,API');
-----
-API,HTML
+# Single-char tokens are silently ignored
+statement ok
+SET inflector_acronyms = ['HTML', 'A', 'API'];
 
-# Clear acronyms
-query T
-SELECT inflector_clear_acronyms();
-----
-Acronyms cleared
-
-# Verify cleared
-query T
-SELECT inflector_get_acronyms();
-----
-(empty)
+# Clear acronyms via RESET
+statement ok
+RESET inflector_acronyms;
 
 # After clear: default behavior restored
 query T
