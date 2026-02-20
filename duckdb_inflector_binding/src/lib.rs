@@ -2,6 +2,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uchar};
 use std::ptr;
 
+use convert_case::{Case, Casing};
+
 /// --- Transform single string ---
 /// Returns a newly allocated C string (caller must free)
 fn transform_single<F>(input: *const c_char, f: F) -> *mut c_char
@@ -48,42 +50,56 @@ fn to_upper_case(s: &str) -> String {
     s.to_uppercase()
 }
 
+fn to_table_case(s: &str) -> String {
+    let snake = s.to_case(Case::Snake);
+    cruet::to_plural(&snake)
+}
+
+fn to_foreign_key(s: &str) -> String {
+    let snake = s.to_case(Case::Snake);
+    if snake.ends_with("_id") {
+        snake
+    } else {
+        format!("{}_id", snake)
+    }
+}
+
 // --- Transform wrappers ---
 #[no_mangle]
 pub extern "C" fn cruet_to_class_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_class_case)
+    transform_single(s, |s| s.to_case(Case::Pascal))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_camel_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_camel_case)
+    transform_single(s, |s| s.to_case(Case::Camel))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_pascal_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_pascal_case)
+    transform_single(s, |s| s.to_case(Case::Pascal))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_screamingsnake_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_screaming_snake_case)
+    transform_single(s, |s| s.to_case(Case::UpperSnake))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_snake_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_snake_case)
+    transform_single(s, |s| s.to_case(Case::Snake))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_kebab_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_kebab_case)
+    transform_single(s, |s| s.to_case(Case::Kebab))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_train_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_train_case)
+    transform_single(s, |s| s.to_case(Case::Train))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_sentence_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_sentence_case)
+    transform_single(s, |s| s.to_case(Case::Sentence))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_title_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_title_case)
+    transform_single(s, |s| s.to_case(Case::Title))
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_lower_case(s: *const c_char) -> *mut c_char {
@@ -96,7 +112,7 @@ pub extern "C" fn cruet_to_upper_case(s: *const c_char) -> *mut c_char {
 
 #[no_mangle]
 pub extern "C" fn cruet_to_table_case(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_table_case)
+    transform_single(s, to_table_case)
 }
 #[no_mangle]
 pub extern "C" fn cruet_ordinalize(s: *const c_char) -> *mut c_char {
@@ -108,7 +124,7 @@ pub extern "C" fn cruet_deordinalize(s: *const c_char) -> *mut c_char {
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_foreign_key(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_foreign_key)
+    transform_single(s, to_foreign_key)
 }
 #[no_mangle]
 pub extern "C" fn cruet_demodulize(s: *const c_char) -> *mut c_char {
@@ -130,45 +146,45 @@ pub extern "C" fn cruet_to_singular(s: *const c_char) -> *mut c_char {
 // --- Predicate wrappers ---
 #[no_mangle]
 pub extern "C" fn cruet_is_class_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_class_case)
+    predicate_single(s, |s| s.to_case(Case::Pascal) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_camel_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_camel_case)
+    predicate_single(s, |s| s.to_case(Case::Camel) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_pascal_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_pascal_case)
+    predicate_single(s, |s| s.to_case(Case::Pascal) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_screamingsnake_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_screaming_snake_case)
+    predicate_single(s, |s| s.to_case(Case::UpperSnake) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_snake_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_snake_case)
+    predicate_single(s, |s| s.to_case(Case::Snake) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_kebab_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_kebab_case)
+    predicate_single(s, |s| s.to_case(Case::Kebab) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_train_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_train_case)
+    predicate_single(s, |s| s.to_case(Case::Train) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_sentence_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_sentence_case)
+    predicate_single(s, |s| s.to_case(Case::Sentence) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_title_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_title_case)
+    predicate_single(s, |s| s.to_case(Case::Title) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_table_case(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_table_case)
+    predicate_single(s, |s| to_table_case(s) == s)
 }
 #[no_mangle]
 pub extern "C" fn cruet_is_foreign_key(s: *const c_char) -> c_uchar {
-    predicate_single(s, cruet::is_foreign_key)
+    predicate_single(s, |s| to_foreign_key(s) == s)
 }

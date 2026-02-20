@@ -321,3 +321,96 @@ query T
 SELECT inflect('table', {'FirstName': 1, 'LastName': 2});
 ----
 {'first_names': 1, 'last_names': 2}
+
+# Test digit boundary handling (GitHub issue #3)
+# Consecutive digits should be kept together, splitting only at letter-digit transitions
+
+# snake_case with digits
+query T
+SELECT inflector_to_snake_case('start15min');
+----
+start_15_min
+
+query T
+SELECT inflector_to_snake_case('one123hi');
+----
+one_123_hi
+
+query T
+SELECT inflector_to_snake_case('one12hi');
+----
+one_12_hi
+
+query T
+SELECT inflector_to_snake_case('one123');
+----
+one_123
+
+# camelCase with digits
+query T
+SELECT inflector_to_camel_case('start15min');
+----
+start15Min
+
+query T
+SELECT inflector_to_camel_case('one123hi');
+----
+one123Hi
+
+# kebab-case with digits
+query T
+SELECT inflector_to_kebab_case('start15min');
+----
+start-15-min
+
+query T
+SELECT inflector_to_kebab_case('one123hi');
+----
+one-123-hi
+
+# SCREAMING_SNAKE_CASE with digits
+query T
+SELECT inflector_to_screamingsnake_case('start15min');
+----
+START_15_MIN
+
+# Train-Case with digits
+query T
+SELECT inflector_to_train_case('start15min');
+----
+Start-15-Min
+
+# PascalCase with digits
+query T
+SELECT inflector_to_pascal_case('start15min');
+----
+Start15Min
+
+# Title Case with digits
+query T
+SELECT inflector_to_title_case('start15min');
+----
+Start 15 Min
+
+# Sentence case with digits
+query T
+SELECT inflector_to_sentence_case('start15min');
+----
+Start 15 min
+
+# inflect() scalar function with digits
+query T
+SELECT inflect('snake', 'start15min');
+----
+start_15_min
+
+# Predicate with digits
+query T
+SELECT inflector_is_snake_case('start_15_min');
+----
+true
+
+query T
+SELECT inflector_is_snake_case('start15min');
+----
+false
