@@ -566,3 +566,82 @@ query T
 SELECT inflector_is_pascal_case('HtmlParser');
 ----
 true
+
+# ============================================================
+# Test accent stripping (strip_accents option)
+# ============================================================
+
+# Scalar string with strip_accents
+query T
+SELECT inflect('snake', 'Libellé civilité', true);
+----
+libelle_civilite
+
+# Default behavior preserves accents
+query T
+SELECT inflect('snake', 'Libellé civilité');
+----
+libellé_civilité
+
+# Explicit false preserves accents
+query T
+SELECT inflect('snake', 'Libellé civilité', false);
+----
+libellé_civilité
+
+# Struct with strip_accents
+query T
+SELECT inflect('snake', {"Libellé": 1, "civilité": 2}, true);
+----
+{'libelle': 1, 'civilite': 2}
+
+# Struct without strip_accents preserves accents
+query T
+SELECT inflect('snake', {"Libellé": 1, "civilité": 2});
+----
+{'libellé': 1, 'civilité': 2}
+
+# Table function with strip_accents
+query T
+SELECT "libelle" FROM inflect('snake', (SELECT 1 AS "Libellé"), strip_accents := true);
+----
+1
+
+# Table function without strip_accents preserves accents
+query T
+SELECT "libellé" FROM inflect('snake', (SELECT 1 AS "Libellé"));
+----
+1
+
+# Combined with other case styles
+query T
+SELECT inflect('camel', 'libellé_civilité', true);
+----
+libelleCivilite
+
+query T
+SELECT inflect('pascal', 'libellé_civilité', true);
+----
+LibelleCivilite
+
+query T
+SELECT inflect('title', 'libellé_civilité', true);
+----
+Libelle Civilite
+
+query T
+SELECT inflect('kebab', 'Libellé Civilité', true);
+----
+libelle-civilite
+
+# Strip accents with struct and camel case
+query T
+SELECT inflect('camel', {"libellé_civilité": 1, "données_entrée": 2}, true);
+----
+{'libelleCivilite': 1, 'donneesEntree': 2}
+
+# ASCII input is unaffected by strip_accents
+query T
+SELECT inflect('snake', 'HelloWorld', true);
+----
+hello_world
