@@ -7,6 +7,7 @@
 #include "duckdb/main/config.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_function_info.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include "rust.h"
 #include "query_farm_telemetry.hpp"
