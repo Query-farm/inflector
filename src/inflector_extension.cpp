@@ -7,9 +7,20 @@
 #include "duckdb/main/config.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_function_info.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include "rust.h"
 #include "query_farm_telemetry.hpp"
+#include "utf8proc.hpp"
+
 namespace duckdb {
+
+static std::string StripAccentsString(const std::string &input) {
+	auto stripped = utf8proc_remove_accents((const utf8proc_uint8_t *)input.c_str(),
+	                                        (utf8proc_ssize_t)input.size());
+	std::string result((const char *)stripped);
+	free(stripped);
+	return result;
+}
 
 // Generic helper for string transformations with documentation
 inline void RegisterInflectorTransform(ExtensionLoader &loader, const char *sql_name,
@@ -73,14 +84,19 @@ inline void RegisterInflectorPredicate(ExtensionLoader &loader, const char *sql_
 }
 
 struct InflectBindData : public FunctionData {
-	InflectBindData() {
+	InflectBindData() : strip_accents(false) {
 	}
 
+	bool strip_accents;
+
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<InflectBindData>();
+		auto copy = make_uniq<InflectBindData>();
+		copy->strip_accents = strip_accents;
+		return copy;
 	}
 	bool Equals(const FunctionData &other_p) const override {
-		return true;
+		auto &other = other_p.Cast<InflectBindData>();
+		return strip_accents == other.strip_accents;
 	}
 };
 
@@ -118,6 +134,12 @@ static unique_ptr<FunctionData> InflectTableBind(ClientContext &context, TableFu
 	}
 	TransformFunc transform = it->second;
 
+	bool strip_accents = false;
+	auto sa_it = input.named_parameters.find("strip_accents");
+	if (sa_it != input.named_parameters.end()) {
+		strip_accents = sa_it->second.GetValue<bool>();
+	}
+
 	// Process each input column
 	for (idx_t i = 0; i < input.input_table_types.size(); i++) {
 		auto &part_name = input.input_table_names[i];
@@ -125,7 +147,12 @@ static unique_ptr<FunctionData> InflectTableBind(ClientContext &context, TableFu
 
 		return_types.push_back(part_type);
 
-		char *new_name = transform(part_name.c_str());
+		std::string name_to_transform = part_name;
+		if (strip_accents) {
+			name_to_transform = StripAccentsString(name_to_transform);
+		}
+
+		char *new_name = transform(name_to_transform.c_str());
 		if (!new_name) {
 			throw InternalException("Inflector transform returned null - memory allocation failed");
 		}
@@ -133,7 +160,9 @@ static unique_ptr<FunctionData> InflectTableBind(ClientContext &context, TableFu
 		free_c_string(new_name);
 	}
 
-	return make_uniq<InflectBindData>();
+	auto bind_data = make_uniq<InflectBindData>();
+	bind_data->strip_accents = strip_accents;
+	return bind_data;
 }
 
 static OperatorResultType InflectInOut(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
@@ -153,21 +182,24 @@ static OperatorFinalizeResultType InflectInOutFinalize(ExecutionContext &context
 }
 
 struct InflectScalarBindData : public FunctionData {
-	InflectScalarBindData(char *(*transform_func_p)(const char *)) : transform_func(transform_func_p) {
+	InflectScalarBindData(char *(*transform_func_p)(const char *), bool strip_accents_p = false)
+	    : transform_func(transform_func_p), strip_accents(strip_accents_p) {
 	}
 
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<InflectScalarBindData>(transform_func);
+		return make_uniq<InflectScalarBindData>(transform_func, strip_accents);
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<InflectScalarBindData>();
-		return transform_func == other.transform_func;
+		return transform_func == other.transform_func && strip_accents == other.strip_accents;
 	}
 
 	char *(*transform_func)(const char *);
+	bool strip_accents;
 };
 
-LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform, bool recursive) {
+LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform, bool recursive,
+                               bool strip_accents = false) {
 	switch (type.id()) {
 
 	case LogicalTypeId::STRUCT: {
@@ -181,11 +213,17 @@ LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform,
 
 			LogicalType updated_type = subtype;
 			if (recursive) {
-				updated_type = InflectLogicalType(subtype, transform, false);
+				updated_type = InflectLogicalType(subtype, transform, false, strip_accents);
+			}
+
+			// Strip accents from the name before inflecting if requested
+			std::string name_to_transform = name;
+			if (strip_accents) {
+				name_to_transform = StripAccentsString(name_to_transform);
 			}
 
 			// Apply name inflection here
-			auto new_name = transform(name.c_str());
+			auto new_name = transform(name_to_transform.c_str());
 			if (!new_name) {
 				throw InternalException("Inflector transform returned null - memory allocation failed");
 			}
@@ -202,7 +240,7 @@ LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform,
 		// Recurse into element type if allowed
 		LogicalType elem = child_type;
 		if (recursive) {
-			elem = InflectLogicalType(child_type, transform, true);
+			elem = InflectLogicalType(child_type, transform, true, strip_accents);
 		}
 		return LogicalType::LIST(elem);
 	}
@@ -215,8 +253,8 @@ LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform,
 		LogicalType new_value = value_type;
 
 		if (recursive) {
-			new_key = InflectLogicalType(key_type, transform, true);
-			new_value = InflectLogicalType(value_type, transform, true);
+			new_key = InflectLogicalType(key_type, transform, true, strip_accents);
+			new_value = InflectLogicalType(value_type, transform, true, strip_accents);
 		}
 		return LogicalType::MAP(new_key, new_value);
 	}
@@ -230,8 +268,8 @@ LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform,
 unique_ptr<FunctionData> InflectScalarBind(ClientContext &context, ScalarFunction &bound_function,
                                            vector<unique_ptr<Expression>> &arguments) {
 
-	if (arguments.size() != 2) {
-		throw InvalidInputException("inflect() requires exactly two arguments: function name and value to inflect");
+	if (arguments.size() < 2 || arguments.size() > 3) {
+		throw InvalidInputException("inflect() requires 2 or 3 arguments: format, value, and optionally strip_accents");
 	}
 
 	auto &arg = arguments[0];
@@ -258,20 +296,42 @@ unique_ptr<FunctionData> InflectScalarBind(ClientContext &context, ScalarFunctio
 	}
 	TransformFunc transform = it->second;
 
-	// We should deal with the type here now.
-	bound_function.return_type = InflectLogicalType(arguments[1]->return_type, transform, true);
+	// Check for strip_accents (3rd argument)
+	bool strip_accents = false;
+	if (arguments.size() == 3) {
+		auto &sa_arg = arguments[2];
+		if (sa_arg->HasParameter()) {
+			throw ParameterNotResolvedException();
+		}
+		if (!sa_arg->IsFoldable()) {
+			throw BinderException("inflect: strip_accents argument must be constant");
+		}
+		strip_accents = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(context, *sa_arg));
+	}
 
-	return make_uniq<InflectScalarBindData>(transform);
+	// We should deal with the type here now.
+	bound_function.return_type = InflectLogicalType(arguments[1]->return_type, transform, true, strip_accents);
+
+	return make_uniq<InflectScalarBindData>(transform, strip_accents);
 }
 
 void InflectStringFunc(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+	auto &bind_data = func_expr.bind_info->Cast<InflectScalarBindData>();
+	bool strip_accents = bind_data.strip_accents;
+
 	auto &type_vector = args.data[0];
 	auto &source = args.data[1];
 
 	BinaryExecutor::Execute<string_t, string_t, string_t>(
-	    type_vector, source, result, args.size(), [&result](string_t name, string_t data) -> string_t {
+	    type_vector, source, result, args.size(),
+	    [&result, strip_accents](string_t name, string_t data) -> string_t {
 		    auto function_name = name.GetString();
 		    auto value = data.GetString();
+
+		    if (strip_accents) {
+			    value = StripAccentsString(value);
+		    }
 
 		    auto it = transformer_map.find(function_name);
 		    if (it == transformer_map.end()) {
@@ -421,6 +481,7 @@ void LoadInternal(ExtensionLoader &loader) {
 	    TableFunction("inflect", {LogicalType::VARCHAR, LogicalType::TABLE}, nullptr, InflectTableBind);
 	inflect_table_function.in_out_function = InflectInOut;
 	inflect_table_function.in_out_function_final = InflectInOutFinalize;
+	inflect_table_function.named_parameters["strip_accents"] = LogicalType::BOOLEAN;
 	CreateTableFunctionInfo table_func_info(inflect_table_function);
 	FunctionDescription table_func_desc;
 	table_func_desc.description = "Transforms column names in query results using the specified case format";
@@ -437,12 +498,23 @@ void LoadInternal(ExtensionLoader &loader) {
 	// Scalar functions: inflect string values or struct field names
 	auto scalar_function_set = ScalarFunctionSet("inflect");
 	auto inflect_string_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                                              LogicalType::VARCHAR, InflectStringFunc);
+	                                              LogicalType::VARCHAR, InflectStringFunc, InflectScalarBind);
 	scalar_function_set.AddFunction(inflect_string_function);
 
 	auto inflect_struct_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::ANY}, LogicalType::ANY,
 	                                              InflectScalarFunc, InflectScalarBind);
 	scalar_function_set.AddFunction(inflect_struct_function);
+
+	// 3-argument overloads with strip_accents boolean
+	auto inflect_string_sa_function =
+	    ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN},
+	                   LogicalType::VARCHAR, InflectStringFunc, InflectScalarBind);
+	scalar_function_set.AddFunction(inflect_string_sa_function);
+
+	auto inflect_struct_sa_function =
+	    ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::ANY, LogicalType::BOOLEAN}, LogicalType::ANY,
+	                   InflectScalarFunc, InflectScalarBind);
+	scalar_function_set.AddFunction(inflect_struct_sa_function);
 
 	CreateScalarFunctionInfo scalar_func_info(scalar_function_set);
 

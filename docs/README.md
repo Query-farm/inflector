@@ -238,9 +238,12 @@ This example inflects the keys of a `STRUCT` or table's column names to a target
 SELECT * FROM inflect('case_style', {'example_field': 5, 'ExampleField2': 3});
 
 -- or inflect an entire result
-
 SELECT * FROM inflect('case_style', (SELECT * FROM 'example.parquet'));
 
+-- optionally strip accents/diacritics from names
+SELECT inflect('snake', 'Libellé civilité', true);
+SELECT inflect('snake', {"Libellé": 1}, true);
+FROM inflect('snake', (SELECT * FROM 'data.parquet'), strip_accents := true);
 ```
 
 **Supported case styles:**
@@ -387,6 +390,66 @@ Single-character tokens are silently ignored (minimum 2 characters).
 - **Snake, kebab, screaming_snake** output is unaffected since those styles don't use mixed case
 - **Thread-safe**: Acronym configuration uses a read-write lock for concurrent access
 
+## Accent Stripping
+
+By default, accented characters (é, ü, ñ, etc.) are preserved as-is during case transformations. When working with data that contains diacritics—such as French column names—you may want fully normalized ASCII output. Use the `strip_accents` option to remove diacritical marks before applying the case transformation.
+
+### Scalar String
+
+Pass `true` as the third argument:
+
+```sql
+SELECT inflect('snake', 'Libellé civilité', true) as v;
+┌──────────────────┐
+│        v         │
+│     varchar      │
+├──────────────────┤
+│ libelle_civilite │
+└──────────────────┘
+```
+
+### Scalar Struct
+
+Field names are stripped of accents:
+
+```sql
+SELECT inflect('snake', {"Libellé": 1, "civilité": 2}, true) as v;
+┌──────────────────────────────────────────┐
+│                    v                     │
+│ struct(libelle integer, civilite integer) │
+├──────────────────────────────────────────┤
+│ {'libelle': 1, 'civilite': 2}            │
+└──────────────────────────────────────────┘
+```
+
+### Table Function
+
+Use the `strip_accents` named parameter:
+
+```sql
+SELECT * FROM inflect('snake', (SELECT 1 AS "Libellé"), strip_accents := true);
+┌─────────┐
+│ libelle │
+│  int32  │
+├─────────┤
+│       1 │
+└─────────┘
+```
+
+### Default Behavior
+
+Without `strip_accents` (or with `false`), accents are preserved—this is fully backward compatible:
+
+```sql
+SELECT inflect('snake', 'Libellé civilité') as v;
+┌──────────────────────┐
+│          v           │
+│       varchar        │
+├──────────────────────┤
+│ libellé_civilité     │
+└──────────────────────┘
+```
+
 ## Advanced Usage
 
 ### Nested Struct Transformation
@@ -465,6 +528,10 @@ A: Yes, `table_case` converts to snake_case and pluralizes the name (e.g., `User
 **Q: Can I chain transformations?**
 
 A: Yes! You can nest `inflect()` calls or pipe results through multiple transformations.
+
+**Q: How do I handle accented/diacritical column names?**
+
+A: Use the `strip_accents` option to remove diacritics before case conversion. For scalar calls, pass `true` as the third argument: `inflect('snake', 'Libellé', true)`. For the table function, use the named parameter: `FROM inflect('snake', (SELECT ...), strip_accents := true)`.
 
 ## Contributing
 
