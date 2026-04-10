@@ -645,3 +645,37 @@ query T
 SELECT inflect('snake', 'HelloWorld', true);
 ----
 hello_world
+
+# ============================================================
+# Nested struct / list / map field renaming
+# ============================================================
+
+# Nested struct: inner field names must also be renamed
+query T
+SELECT inflect('snake', {'outer': {'firstName': 1, 'lastName': 2}});
+----
+{'outer': {'first_name': 1, 'last_name': 2}}
+
+# Two levels of nesting
+query T
+SELECT inflect('camel', {'outer_one': {'inner_two': {'leaf_three': 5}}});
+----
+{'outerOne': {'innerTwo': {'leafThree': 5}}}
+
+# List of structs: struct field names inside the list elements rename
+query T
+SELECT inflect('snake', [{'firstName': 'a'}, {'firstName': 'b'}]);
+----
+[{'first_name': a}, {'first_name': b}]
+
+# Struct containing a list of structs
+query T
+SELECT inflect('snake', {'topField': [{'innerField': 1}, {'innerField': 2}]});
+----
+{'top_field': [{'inner_field': 1}, {'inner_field': 2}]}
+
+# Map with struct values: struct field names inside values rename
+query T
+SELECT inflect('snake', MAP(['k'], [{'firstName': 1}]));
+----
+{k={'first_name': 1}}

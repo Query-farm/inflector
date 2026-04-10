@@ -18,6 +18,9 @@ namespace duckdb {
 static std::string StripAccentsString(const std::string &input) {
 	auto stripped = utf8proc_remove_accents((const utf8proc_uint8_t *)input.c_str(),
 	                                        (utf8proc_ssize_t)input.size());
+	if (!stripped) {
+		throw InternalException("utf8proc_remove_accents failed");
+	}
 	std::string result((const char *)stripped);
 	free(stripped);
 	return result;
@@ -214,7 +217,7 @@ LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform,
 
 			LogicalType updated_type = subtype;
 			if (recursive) {
-				updated_type = InflectLogicalType(subtype, transform, false, strip_accents);
+				updated_type = InflectLogicalType(subtype, transform, true, strip_accents);
 			}
 
 			// Strip accents from the name before inflecting if requested
@@ -353,31 +356,61 @@ void InflectStringFunc(DataChunk &args, ExpressionState &state, Vector &result) 
 	    });
 }
 
-void InflectScalarFunc(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &source = args.data[1];
+// Recursively populate `result` from `source` where the two vectors have
+// physically identical layouts but may differ in struct field names. The
+// result vector's type tree (already set by InflectScalarBind to the
+// renamed type) is preserved; data is copied positionally so renames at
+// every nesting level take effect.
+static void InflectRenameCopy(Vector &source, Vector &result, idx_t count) {
+	switch (result.GetType().id()) {
+	case LogicalTypeId::STRUCT: {
+		auto &source_children = StructVector::GetEntries(source);
+		auto &result_children = StructVector::GetEntries(result);
+		D_ASSERT(source_children.size() == result_children.size());
 
-	if (!(result.GetType().IsNested() && result.GetType().InternalType() == PhysicalType::STRUCT)) {
-		result.Reference(source);
-		result.Verify(args.size());
+		for (idx_t i = 0; i < result_children.size(); i++) {
+			InflectRenameCopy(*source_children[i], *result_children[i], count);
+		}
+
+		if (source.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(result, ConstantVector::IsNull(source));
+		} else {
+			source.Flatten(count);
+			result.SetVectorType(VectorType::FLAT_VECTOR);
+			FlatVector::Validity(result) = FlatVector::Validity(source);
+		}
 		return;
 	}
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::MAP: {
+		source.Flatten(count);
+		result.SetVectorType(VectorType::FLAT_VECTOR);
 
-	auto &source_vectors = StructVector::GetEntries(source);
-	auto &target_children = StructVector::GetEntries(result);
+		auto src_entries = FlatVector::GetData<list_entry_t>(source);
+		auto res_entries = FlatVector::GetData<list_entry_t>(result);
+		memcpy(res_entries, src_entries, sizeof(list_entry_t) * count);
+		FlatVector::Validity(result) = FlatVector::Validity(source);
 
-	for (idx_t i = 0; i < source_vectors.size(); i++) {
-		auto &source_vector = *source_vectors[i];
-		auto &target_vector = *target_children[i];
+		idx_t list_size = ListVector::GetListSize(source);
+		ListVector::Reserve(result, list_size);
+		ListVector::SetListSize(result, list_size);
 
-		target_vector.Reference(source_vector);
+		auto &source_child = ListVector::GetEntry(source);
+		auto &result_child = ListVector::GetEntry(result);
+		InflectRenameCopy(source_child, result_child, list_size);
+		return;
 	}
-
-	if (source.GetVectorType() == VectorType::CONSTANT_VECTOR) {
-		result.SetVectorType(VectorType::CONSTANT_VECTOR);
-	} else {
-		auto &result_validity = FlatVector::Validity(result);
-		result_validity = FlatVector::Validity(source);
+	default:
+		// Leaf or non-renamed-aware type: types are identical, plain reference is safe.
+		result.Reference(source);
+		return;
 	}
+}
+
+void InflectScalarFunc(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &source = args.data[1];
+	InflectRenameCopy(source, result, args.size());
 	result.Verify(args.size());
 }
 
