@@ -601,7 +601,7 @@ void LoadInternal(ExtensionLoader &loader) {
 		    cruet_set_acronyms(csv.c_str());
 	    });
 
-	QueryFarmSendTelemetry(loader, "inflector", "2025110901");
+	QueryFarmSendTelemetry(loader, "inflector", "2026072501");
 }
 
 void InflectorExtension::Load(ExtensionLoader &loader) {
@@ -612,7 +612,7 @@ std::string InflectorExtension::Name() {
 }
 
 std::string InflectorExtension::Version() const {
-	return "2025121001";
+	return "2026072501";
 }
 
 } // namespace duckdb
