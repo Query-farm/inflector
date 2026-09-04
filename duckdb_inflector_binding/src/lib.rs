@@ -15,12 +15,16 @@ fn acronyms() -> &'static RwLock<HashSet<String>> {
 
 /// Set acronyms from a comma-separated string. Tokens are uppercased.
 /// Single-character tokens are silently ignored (minimum 2 chars).
+/// Invalid UTF-8 is silently ignored (acronyms left unchanged).
 #[no_mangle]
 pub extern "C" fn cruet_set_acronyms(csv: *const c_char) {
     if csv.is_null() {
         return;
     }
-    let s = unsafe { CStr::from_ptr(csv).to_str().unwrap() };
+    let s = match unsafe { CStr::from_ptr(csv) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
     let mut set = HashSet::new();
     for token in s.split(',') {
         let trimmed = token.trim().to_uppercase();
@@ -172,7 +176,8 @@ fn convert_with_acronyms(input: &str, case: Case) -> String {
 }
 
 /// --- Transform single string ---
-/// Returns a newly allocated C string (caller must free)
+/// Returns a newly allocated C string (caller must free), or NULL on error
+/// (null input, invalid UTF-8, or output containing an interior NUL byte).
 fn transform_single<F>(input: *const c_char, f: F) -> *mut c_char
 where
     F: Fn(&str) -> String,
@@ -181,12 +186,18 @@ where
         return ptr::null_mut();
     }
 
-    let s = unsafe { CStr::from_ptr(input).to_str().unwrap() };
-    CString::new(f(s)).unwrap().into_raw()
+    let s = match unsafe { CStr::from_ptr(input) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match CString::new(f(s)) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
 }
 
 /// --- Predicate single string ---
-/// Returns 1 if true, 0 if false or NULL
+/// Returns 1 if true, 0 if false, NULL, or invalid UTF-8.
 fn predicate_single<F>(input: *const c_char, f: F) -> c_uchar
 where
     F: Fn(&str) -> bool,
@@ -195,7 +206,10 @@ where
         return 0;
     }
 
-    let s = unsafe { CStr::from_ptr(input).to_str().unwrap() };
+    let s = match unsafe { CStr::from_ptr(input) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
     if f(s) { 1 } else { 0 }
 }
 
