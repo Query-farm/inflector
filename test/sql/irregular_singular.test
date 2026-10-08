@@ -1,0 +1,68 @@
+# name: test/sql/irregular_singular.test
+# description: Complete missing irregular inverse rules without changing other inflection
+# group: [inflector]
+
+require inflector
+
+query TT
+SELECT word, inflector_to_singular(word)
+FROM (VALUES ('people'), ('People'), ('PEOPLE'), ('children'), ('Children'), ('CHILDREN'),
+             ('salespeople'), ('salesPeople'), ('SALESPEOPLE'), ('grandchildren'), ('GrandChildren'),
+             ('young_people'), ('person'), ('child'), ('users'), ('mice'), ('men'), ('women'),
+             ('geese'), ('teeth'), ('feet'), ('quizzes'), ('analyses'), ('species'), ('series'),
+             ('fish'), ('PeOpLe'), ('peopled'), ('peoplehood')) t(word);
+----
+people	person
+People	Person
+PEOPLE	PERSON
+children	child
+Children	Child
+CHILDREN	CHILD
+salespeople	salesperson
+salesPeople	salesPerson
+SALESPEOPLE	SALESPERSON
+grandchildren	grandchild
+GrandChildren	GrandChild
+young_people	young_person
+person	person
+child	child
+users	user
+mice	mouse
+men	man
+women	woman
+geese	goose
+teeth	tooth
+feet	foot
+quizzes	quiz
+analyses	analysis
+species	species
+series	series
+fish	fish
+PeOpLe	PeOpLe
+peopled	peopled
+peoplehood	peoplehood
+
+query I
+SELECT bool_and(inflector_to_singular(inflector_to_plural(word)) = word)
+FROM (VALUES ('person'), ('Person'), ('child'), ('Child'), ('salesperson'), ('grandchild'),
+             ('user'), ('mouse'), ('man'), ('woman'), ('goose'), ('tooth'), ('foot'), ('quiz'), ('analysis')) t(word);
+----
+true
+
+query I
+SELECT inflector_to_singular(NULL) IS NULL;
+----
+true
+
+# Multiple vectors exercise the Rust FFI wrapper as well as the rule helper.
+query I
+SELECT count(*) FROM range(5000)
+WHERE inflector_to_singular(CASE WHEN range % 2 = 0 THEN 'people' ELSE 'children' END)
+      = CASE WHEN range % 2 = 0 THEN 'person' ELSE 'child' END;
+----
+5000
+
+query I
+SELECT inflector_to_singular('') = '';
+----
+true

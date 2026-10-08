@@ -26,3 +26,9 @@ Full documentation, including installation, usage, the function reference, and c
 INSTALL inflector FROM community;
 LOAD inflector;
 ```
+
+## Compatibility notes
+
+Version `2026100701` adds the missing `people` → `person` and `children` → `child` singularization rules, including compound suffixes such as `salespeople` and `grandchildren`. Lowercase, title-case, and uppercase forms of those suffixes retain their case. Other words continue to use the upstream `cruet` rules.
+
+Older community binaries may retain the previous behavior until the fixed source is published.
