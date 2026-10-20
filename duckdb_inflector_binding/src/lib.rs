@@ -231,6 +231,25 @@ fn to_upper_case(s: &str) -> String {
     s.to_uppercase()
 }
 
+fn to_singular(s: &str) -> String {
+    // cruet pluralizes person/child (including compound suffixes), but 0.15
+    // has no inverse rules for people/children. Preserve the prefix and the
+    // conventional lower, title, or upper case of these irregular suffixes.
+    for (plural, singular) in [
+        ("people", "person"),
+        ("People", "Person"),
+        ("PEOPLE", "PERSON"),
+        ("children", "child"),
+        ("Children", "Child"),
+        ("CHILDREN", "CHILD"),
+    ] {
+        if let Some(prefix) = s.strip_suffix(plural) {
+            return format!("{prefix}{singular}");
+        }
+    }
+    cruet::to_singular(s)
+}
+
 fn to_table_case(s: &str) -> String {
     let snake = s.to_case(Case::Snake);
     cruet::to_plural(&snake)
@@ -321,7 +340,7 @@ pub extern "C" fn cruet_to_plural(s: *const c_char) -> *mut c_char {
 }
 #[no_mangle]
 pub extern "C" fn cruet_to_singular(s: *const c_char) -> *mut c_char {
-    transform_single(s, cruet::to_singular)
+    transform_single(s, to_singular)
 }
 
 // --- Predicate wrappers ---
