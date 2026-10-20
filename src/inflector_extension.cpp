@@ -9,6 +9,11 @@
 #include <duckdb/parser/parsed_data/create_table_function_info.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include "duckdb/common/vector/constant_vector.hpp"
+#include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "rust.h"
 #include "query_farm_telemetry.hpp"
 #include "utf8proc.hpp"
@@ -34,7 +39,7 @@ inline void RegisterInflectorTransform(ExtensionLoader &loader, const char *sql_
 	auto fun_impl = [cruet_func](DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &name_vector = args.data[0];
 		UnaryExecutor::Execute<string_t, string_t>(
-		    name_vector, result, args.size(), [cruet_func, &result](string_t name) -> string_t {
+		    name_vector, result, [cruet_func, &result](string_t name) -> string_t {
 			    auto value = name.GetString();
 			    char *change_result = cruet_func(value.c_str());
 			    if (!change_result) {
@@ -47,6 +52,7 @@ inline void RegisterInflectorTransform(ExtensionLoader &loader, const char *sql_
 	};
 
 	ScalarFunction fun(sql_name, {LogicalType::VARCHAR}, LogicalType::VARCHAR, fun_impl);
+	fun.SetFallible();
 	CreateScalarFunctionInfo info(fun);
 
 	FunctionDescription func_desc;
@@ -67,7 +73,7 @@ inline void RegisterInflectorPredicate(ExtensionLoader &loader, const char *sql_
                                        vector<string> categories) {
 	auto fun_impl = [cruet_func](DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &name_vector = args.data[0];
-		UnaryExecutor::Execute<string_t, bool>(name_vector, result, args.size(), [cruet_func](string_t name) -> bool {
+		UnaryExecutor::Execute<string_t, bool>(name_vector, result, [cruet_func](string_t name) -> bool {
 			auto value = name.GetString();
 			return static_cast<bool>(cruet_func(value.c_str()));
 		});
@@ -121,7 +127,7 @@ static const unordered_map<string, TransformFunc> transformer_map = {
     {"lower", cruet_to_lower_case},       {"lower_case", cruet_to_lower_case}};
 
 static unique_ptr<FunctionData> InflectTableBind(ClientContext &context, TableFunctionBindInput &input,
-                                                 vector<LogicalType> &return_types, vector<string> &names) {
+                                                 vector<LogicalType> &return_types, vector<Identifier> &names) {
 
 	auto &function_name_value = input.inputs[0];
 	if (function_name_value.IsNull()) {
@@ -151,7 +157,7 @@ static unique_ptr<FunctionData> InflectTableBind(ClientContext &context, TableFu
 
 		return_types.push_back(part_type);
 
-		std::string name_to_transform = part_name;
+		std::string name_to_transform = part_name.GetIdentifierName();
 		if (strip_accents) {
 			name_to_transform = StripAccentsString(name_to_transform);
 		}
@@ -221,7 +227,7 @@ LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform,
 			}
 
 			// Strip accents from the name before inflecting if requested
-			std::string name_to_transform = name;
+			std::string name_to_transform = name.GetIdentifierName();
 			if (strip_accents) {
 				name_to_transform = StripAccentsString(name_to_transform);
 			}
@@ -269,8 +275,10 @@ LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform,
 	}
 }
 
-unique_ptr<FunctionData> InflectScalarBind(ClientContext &context, ScalarFunction &bound_function,
-                                           vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> InflectScalarBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &bound_function = input.GetBoundFunction();
+	auto &arguments = input.GetArguments();
 
 	if (arguments.size() < 2 || arguments.size() > 3) {
 		throw InvalidInputException("inflect() requires 2 or 3 arguments: format, value, and optionally strip_accents");
@@ -285,7 +293,7 @@ unique_ptr<FunctionData> InflectScalarBind(ClientContext &context, ScalarFunctio
 		throw BinderException("inflect: format argument must be constant");
 	}
 
-	if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+	if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 		throw InvalidInputException("First argument to inflect() must be a VARCHAR function name");
 	}
 
@@ -314,22 +322,21 @@ unique_ptr<FunctionData> InflectScalarBind(ClientContext &context, ScalarFunctio
 	}
 
 	// We should deal with the type here now.
-	bound_function.return_type = InflectLogicalType(arguments[1]->return_type, transform, true, strip_accents);
+	bound_function.SetReturnType(InflectLogicalType(arguments[1]->GetReturnType(), transform, true, strip_accents));
 
 	return make_uniq<InflectScalarBindData>(transform, strip_accents);
 }
 
 void InflectStringFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &bind_data = func_expr.bind_info->Cast<InflectScalarBindData>();
+	auto &bind_data = func_expr.BindInfo()->Cast<InflectScalarBindData>();
 	bool strip_accents = bind_data.strip_accents;
 
 	auto &type_vector = args.data[0];
 	auto &source = args.data[1];
 
 	BinaryExecutor::Execute<string_t, string_t, string_t>(
-	    type_vector, source, result, args.size(),
-	    [&result, strip_accents](string_t name, string_t data) -> string_t {
+	    type_vector, source, result, [&result, strip_accents](string_t name, string_t data) -> string_t {
 		    auto function_name = name.GetString();
 		    auto value = data.GetString();
 
@@ -364,41 +371,35 @@ void InflectStringFunc(DataChunk &args, ExpressionState &state, Vector &result) 
 static void InflectRenameCopy(Vector &source, Vector &result, idx_t count) {
 	switch (result.GetType().id()) {
 	case LogicalTypeId::STRUCT: {
+		source.Flatten();
 		auto &source_children = StructVector::GetEntries(source);
 		auto &result_children = StructVector::GetEntries(result);
 		D_ASSERT(source_children.size() == result_children.size());
 
 		for (idx_t i = 0; i < result_children.size(); i++) {
-			InflectRenameCopy(*source_children[i], *result_children[i], count);
+			InflectRenameCopy(source_children[i], result_children[i], count);
 		}
-
-		if (source.GetVectorType() == VectorType::CONSTANT_VECTOR) {
-			result.SetVectorType(VectorType::CONSTANT_VECTOR);
-			ConstantVector::SetNull(result, ConstantVector::IsNull(source));
-		} else {
-			source.Flatten(count);
-			result.SetVectorType(VectorType::FLAT_VECTOR);
-			FlatVector::Validity(result) = FlatVector::Validity(source);
-		}
+		FlatVector::CopyValidity(result, source, count);
+		FlatVector::SetSize(result, count);
 		return;
 	}
 	case LogicalTypeId::LIST:
 	case LogicalTypeId::MAP: {
-		source.Flatten(count);
-		result.SetVectorType(VectorType::FLAT_VECTOR);
+		source.Flatten();
 
 		auto src_entries = FlatVector::GetData<list_entry_t>(source);
-		auto res_entries = FlatVector::GetData<list_entry_t>(result);
+		auto res_entries = FlatVector::GetDataMutable<list_entry_t>(result);
 		memcpy(res_entries, src_entries, sizeof(list_entry_t) * count);
-		FlatVector::Validity(result) = FlatVector::Validity(source);
+		FlatVector::CopyValidity(result, source, count);
 
 		idx_t list_size = ListVector::GetListSize(source);
 		ListVector::Reserve(result, list_size);
-		ListVector::SetListSize(result, list_size);
 
-		auto &source_child = ListVector::GetEntry(source);
-		auto &result_child = ListVector::GetEntry(result);
+		auto &source_child = ListVector::GetChildMutable(source);
+		auto &result_child = ListVector::GetChildMutable(result);
 		InflectRenameCopy(source_child, result_child, list_size);
+		ListVector::SetListSize(result, list_size);
+		FlatVector::SetSize(result, count);
 		return;
 	}
 	default:
@@ -411,7 +412,7 @@ static void InflectRenameCopy(Vector &source, Vector &result, idx_t count) {
 void InflectScalarFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &source = args.data[1];
 	InflectRenameCopy(source, result, args.size());
-	result.Verify(args.size());
+	result.Verify();
 }
 
 // Load all inflector functions
@@ -515,7 +516,8 @@ void LoadInternal(ExtensionLoader &loader) {
 	    TableFunction("inflect", {LogicalType::VARCHAR, LogicalType::TABLE}, nullptr, InflectTableBind);
 	inflect_table_function.in_out_function = InflectInOut;
 	inflect_table_function.in_out_function_final = InflectInOutFinalize;
-	inflect_table_function.named_parameters["strip_accents"] = LogicalType::BOOLEAN;
+	inflect_table_function.GetSignature().WithTypedKwargs(
+	    "options", [](TypedKwargs &options) { options.Add("strip_accents", LogicalType::BOOLEAN); });
 	CreateTableFunctionInfo table_func_info(inflect_table_function);
 	FunctionDescription table_func_desc;
 	table_func_desc.description = "Transforms column names in query results using the specified case format";
@@ -550,6 +552,7 @@ void LoadInternal(ExtensionLoader &loader) {
 	                   InflectScalarFunc, InflectScalarBind);
 	scalar_function_set.AddFunction(inflect_struct_sa_function);
 
+	scalar_function_set.SetFallible();
 	CreateScalarFunctionInfo scalar_func_info(scalar_function_set);
 
 	// Description for string variant
