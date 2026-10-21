@@ -1,621 +1,165 @@
 #define DUCKDB_EXTENSION_MAIN
 
 #include "inflector_extension.hpp"
-#include "duckdb.hpp"
+#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/function/scalar_function.hpp"
-#include "duckdb/main/config.hpp"
-#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
-#include <duckdb/parser/parsed_data/create_table_function_info.hpp>
-#include <duckdb/execution/expression_executor.hpp>
-#include <duckdb/planner/expression/bound_function_expression.hpp>
-#include "duckdb/common/vector/constant_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
-#include "rust.h"
-#include "query_farm_telemetry.hpp"
-#include "utf8proc.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/main/extension_helper.hpp"
+#include "duckdb/main/extension_load_options.hpp"
+#include "duckdb/main/extension_repository_manager.hpp"
+
+// For DuckDB 2.0 and later this extension is distributed from the Query.Farm extension repository. The build published to the
+// DuckDB community repository only keeps the name. When the user has already added the Query.Farm repository and
+// installed the extension from it, loading this build loads that one; otherwise it explains the remaining steps.
+// It never adds the repository or installs anything itself: trusting a repository is the user's decision.
 
 namespace duckdb {
 
-static std::string StripAccentsString(const std::string &input) {
-	auto stripped = utf8proc_remove_accents((const utf8proc_uint8_t *)input.c_str(),
-	                                        (utf8proc_ssize_t)input.size());
-	if (!stripped) {
-		throw InternalException("utf8proc_remove_accents failed");
-	}
-	std::string result((const char *)stripped);
-	free(stripped);
-	return result;
+static constexpr const char *EXTENSION_NAME = "inflector";
+static constexpr const char *EXTENSION_VERSION = "2026102001";
+static constexpr const char *REPOSITORY_NAME = "query_farm";
+static constexpr const char *REPOSITORY_URL = "https://duckdb-extensions.query.farm";
+static constexpr const char *REPOSITORY_HTTP_URL = "http://duckdb-extensions.query.farm";
+// sha256 fingerprints of the Query.Farm repository signing keys (primary and standby)
+static constexpr const char *REPOSITORY_KEY_FINGERPRINTS[] = {
+    "sha256:b293ba6145db8f51f301618f59a720cb8c0c21e7efc6119aab43ea5c708947b5",
+    "sha256:6959de1c16b783b14d4c904f69361811f737017d79ea7078729a74ec2f7f7753"};
+
+static string MovedPreamble() {
+	return StringUtil::Format("The %s extension for DuckDB 2.0 and later is distributed from the Query.Farm extension repository, "
+	                          "not the DuckDB community repository.\n\n",
+	                          EXTENSION_NAME);
 }
 
-// Generic helper for string transformations with documentation
-inline void RegisterInflectorTransform(ExtensionLoader &loader, const char *sql_name,
-                                       char *(*cruet_func)(const char *), const char *description,
-                                       const char *example, const char *param_name,
-                                       vector<string> categories) {
-	auto fun_impl = [cruet_func](DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &name_vector = args.data[0];
-		UnaryExecutor::Execute<string_t, string_t>(
-		    name_vector, result, [cruet_func, &result](string_t name) -> string_t {
-			    auto value = name.GetString();
-			    char *change_result = cruet_func(value.c_str());
-			    if (!change_result) {
-				    throw InternalException("Inflector transform returned null - memory allocation failed");
-			    }
-			    string_t return_result = StringVector::AddString(result, change_result);
-			    free_c_string(change_result);
-			    return return_result;
-		    });
-	};
-
-	ScalarFunction fun(sql_name, {LogicalType::VARCHAR}, LogicalType::VARCHAR, fun_impl);
-	fun.SetFallible();
-	CreateScalarFunctionInfo info(fun);
-
-	FunctionDescription func_desc;
-	func_desc.description = description;
-	func_desc.examples.push_back(example);
-	func_desc.parameter_names.push_back(param_name);
-	func_desc.parameter_types.push_back(LogicalType::VARCHAR);
-	func_desc.categories = std::move(categories);
-	info.descriptions.push_back(std::move(func_desc));
-
-	loader.RegisterFunction(info);
+static string MoreInformation() {
+	return StringUtil::Format("\n\nMore information: https://query.farm/products/extensions/%s/", EXTENSION_NAME);
 }
 
-// Generic helper for boolean predicates with documentation
-inline void RegisterInflectorPredicate(ExtensionLoader &loader, const char *sql_name,
-                                       unsigned char (*cruet_func)(const char *), const char *description,
-                                       const char *example, const char *param_name,
-                                       vector<string> categories) {
-	auto fun_impl = [cruet_func](DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &name_vector = args.data[0];
-		UnaryExecutor::Execute<string_t, bool>(name_vector, result, [cruet_func](string_t name) -> bool {
-			auto value = name.GetString();
-			return static_cast<bool>(cruet_func(value.c_str()));
-		});
-	};
-
-	ScalarFunction fun(sql_name, {LogicalType::VARCHAR}, LogicalType::BOOLEAN, fun_impl);
-	CreateScalarFunctionInfo info(fun);
-
-	FunctionDescription func_desc;
-	func_desc.description = description;
-	func_desc.examples.push_back(example);
-	func_desc.parameter_names.push_back(param_name);
-	func_desc.parameter_types.push_back(LogicalType::VARCHAR);
-	func_desc.categories = std::move(categories);
-	info.descriptions.push_back(std::move(func_desc));
-
-	loader.RegisterFunction(info);
-}
-
-struct InflectBindData : public FunctionData {
-	InflectBindData() : strip_accents(false) {
-	}
-
-	bool strip_accents;
-
-	unique_ptr<FunctionData> Copy() const override {
-		auto copy = make_uniq<InflectBindData>();
-		copy->strip_accents = strip_accents;
-		return copy;
-	}
-	bool Equals(const FunctionData &other_p) const override {
-		auto &other = other_p.Cast<InflectBindData>();
-		return strip_accents == other.strip_accents;
-	}
-};
-
-// Mapping from function name -> cruet transformer
-using TransformFunc = char *(*)(const char *);
-
-static const unordered_map<string, TransformFunc> transformer_map = {
-    {"camel", cruet_to_camel_case},       {"camel_case", cruet_to_camel_case},
-    {"class", cruet_to_class_case},       {"class_case", cruet_to_class_case},
-    {"pascal", cruet_to_pascal_case},     {"pascal_case", cruet_to_pascal_case},
-    {"snake", cruet_to_snake_case},       {"snake_case", cruet_to_snake_case},
-    {"kebab", cruet_to_kebab_case},       {"kebab_case", cruet_to_kebab_case},
-    {"train", cruet_to_train_case},       {"train_case", cruet_to_train_case},
-    {"title", cruet_to_title_case},       {"title_case", cruet_to_title_case},
-    {"table", cruet_to_table_case},       {"table_case", cruet_to_table_case},
-    {"sentence", cruet_to_sentence_case}, {"sentence_case", cruet_to_sentence_case},
-    {"upper", cruet_to_upper_case},       {"upper_case", cruet_to_upper_case},
-    {"lower", cruet_to_lower_case},       {"lower_case", cruet_to_lower_case}};
-
-static unique_ptr<FunctionData> InflectTableBind(ClientContext &context, TableFunctionBindInput &input,
-                                                 vector<LogicalType> &return_types, vector<Identifier> &names) {
-
-	auto &function_name_value = input.inputs[0];
-	if (function_name_value.IsNull()) {
-		throw InvalidInputException("Function name cannot be NULL");
-	}
-
-	auto function_name = function_name_value.GetValue<string>();
-
-	auto it = transformer_map.find(function_name);
-	if (it == transformer_map.end()) {
-		throw InvalidInputException("Unknown inflection '%s'. Supported: camel, class, pascal, snake, kebab, train, title, "
-		                            "table, sentence, upper, lower",
-		                            function_name.c_str());
-	}
-	TransformFunc transform = it->second;
-
-	bool strip_accents = false;
-	auto sa_it = input.named_parameters.find("strip_accents");
-	if (sa_it != input.named_parameters.end()) {
-		strip_accents = sa_it->second.GetValue<bool>();
-	}
-
-	// Process each input column
-	for (idx_t i = 0; i < input.input_table_types.size(); i++) {
-		auto &part_name = input.input_table_names[i];
-		auto &part_type = input.input_table_types[i];
-
-		return_types.push_back(part_type);
-
-		std::string name_to_transform = part_name.GetIdentifierName();
-		if (strip_accents) {
-			name_to_transform = StripAccentsString(name_to_transform);
+static bool IsInstalledFromRepository(DatabaseInstance &db, FileSystem &fs) {
+	for (auto &directory : ExtensionHelper::GetExtensionDirectoryPath(db, fs)) {
+		auto path = fs.JoinPath(fs.JoinPath(fs.JoinPath(directory, "repositories"), REPOSITORY_NAME),
+		                        string(EXTENSION_NAME) + ".duckdb_extension");
+		if (fs.FileExists(path)) {
+			return true;
 		}
-
-		char *new_name = transform(name_to_transform.c_str());
-		if (!new_name) {
-			throw InternalException("Inflector transform returned null - memory allocation failed");
-		}
-		names.emplace_back(new_name);
-		free_c_string(new_name);
 	}
-
-	auto bind_data = make_uniq<InflectBindData>();
-	bind_data->strip_accents = strip_accents;
-	return bind_data;
+	return false;
 }
 
-static OperatorResultType InflectInOut(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
-                                       DataChunk &output) {
-	output.Reset();
-	output.Reference(input);
-	output.Verify();
-	return OperatorResultType::NEED_MORE_INPUT;
-}
-
-static OperatorFinalizeResultType InflectInOutFinalize(ExecutionContext &context, TableFunctionInput &data_p,
-                                                       DataChunk &output) {
-
-	output.SetCardinality(0);
-	output.Verify();
-	return OperatorFinalizeResultType::FINISHED;
-}
-
-struct InflectScalarBindData : public FunctionData {
-	InflectScalarBindData(char *(*transform_func_p)(const char *), bool strip_accents_p = false)
-	    : transform_func(transform_func_p), strip_accents(strip_accents_p) {
+// A repository named query_farm is only used when it points at the Query.Farm prefix and pins a Query.Farm signing key.
+static bool IsQueryFarmRepository(const ExtensionRepository &repository) {
+	auto prefix = StringUtil::Lower(repository.path);
+	while (StringUtil::EndsWith(prefix, "/")) {
+		prefix.pop_back();
 	}
-
-	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<InflectScalarBindData>(transform_func, strip_accents);
+	if (prefix != REPOSITORY_URL && prefix != REPOSITORY_HTTP_URL) {
+		return false;
 	}
-	bool Equals(const FunctionData &other_p) const override {
-		auto &other = other_p.Cast<InflectScalarBindData>();
-		return transform_func == other.transform_func && strip_accents == other.strip_accents;
-	}
-
-	char *(*transform_func)(const char *);
-	bool strip_accents;
-};
-
-LogicalType InflectLogicalType(const LogicalType &type, TransformFunc transform, bool recursive,
-                               bool strip_accents = false) {
-	switch (type.id()) {
-
-	case LogicalTypeId::STRUCT: {
-		const auto &children = StructType::GetChildTypes(type);
-		child_list_t<LogicalType> new_children;
-
-		new_children.reserve(children.size());
-		for (auto &child : children) {
-			auto &name = child.first;
-			auto &subtype = child.second;
-
-			LogicalType updated_type = subtype;
-			if (recursive) {
-				updated_type = InflectLogicalType(subtype, transform, true, strip_accents);
+	for (auto &key : repository.public_keys) {
+		auto fingerprint = ExtensionRepositoryManager::GetPublicKeyFingerprint(key);
+		for (auto trusted : REPOSITORY_KEY_FINGERPRINTS) {
+			if (fingerprint == trusted) {
+				return true;
 			}
-
-			// Strip accents from the name before inflecting if requested
-			std::string name_to_transform = name.GetIdentifierName();
-			if (strip_accents) {
-				name_to_transform = StripAccentsString(name_to_transform);
-			}
-
-			// Apply name inflection here
-			auto new_name = transform(name_to_transform.c_str());
-			if (!new_name) {
-				throw InternalException("Inflector transform returned null - memory allocation failed");
-			}
-			new_children.emplace_back(new_name, updated_type);
-			free_c_string(new_name);
 		}
-
-		return LogicalType::STRUCT(new_children);
 	}
-
-	case LogicalTypeId::LIST: {
-		auto &child_type = ListType::GetChildType(type);
-
-		// Recurse into element type if allowed
-		LogicalType elem = child_type;
-		if (recursive) {
-			elem = InflectLogicalType(child_type, transform, true, strip_accents);
-		}
-		return LogicalType::LIST(elem);
-	}
-
-	case LogicalTypeId::MAP: {
-		auto &key_type = MapType::KeyType(type);
-		auto &value_type = MapType::ValueType(type);
-
-		LogicalType new_key = key_type;
-		LogicalType new_value = value_type;
-
-		if (recursive) {
-			new_key = InflectLogicalType(key_type, transform, true, strip_accents);
-			new_value = InflectLogicalType(value_type, transform, true, strip_accents);
-		}
-		return LogicalType::MAP(new_key, new_value);
-	}
-
-	default:
-		// Scalars and other types remain unchanged
-		return type;
-	}
+	return false;
 }
 
-unique_ptr<FunctionData> InflectScalarBind(BindScalarFunctionInput &input) {
-	auto &context = input.GetClientContext();
-	auto &bound_function = input.GetBoundFunction();
-	auto &arguments = input.GetArguments();
+static void LoadFromQueryFarmOrExplain(DatabaseInstance &db) {
+	auto &fs = FileSystem::GetFileSystem(db);
+	ExtensionRepository repository;
+	bool has_repository = ExtensionRepositoryManager::TryGetRepository(db, fs, REPOSITORY_NAME, repository);
 
-	if (arguments.size() < 2 || arguments.size() > 3) {
-		throw InvalidInputException("inflect() requires 2 or 3 arguments: format, value, and optionally strip_accents");
+	if (!has_repository) {
+		throw MissingExtensionException(
+		    "%sAdd the repository and install the extension once:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    CREATE EXTENSION REPOSITORY IF NOT EXISTS %s WITH PREFIX '%s';\n"
+		    "    INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Then load it in each session with:\n"
+		    "\n"
+		    "    LOAD %s FROM %s;%s",
+		    MovedPreamble(), REPOSITORY_NAME, REPOSITORY_URL, EXTENSION_NAME, REPOSITORY_NAME, EXTENSION_NAME,
+		    REPOSITORY_NAME, MoreInformation());
+	}
+	if (!IsQueryFarmRepository(repository)) {
+		throw MissingExtensionException(
+		    "%sA repository named %s is configured with the prefix '%s', but it is not the Query.Farm extension "
+		    "repository: it points somewhere else or does not use the Query.Farm signing keys, so the extension is not "
+		    "loaded from it. Replace it with the Query.Farm repository and reinstall the extension:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    CREATE OR REPLACE EXTENSION REPOSITORY %s WITH PREFIX '%s';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Then load it in each session with:\n"
+		    "\n"
+		    "    LOAD %s FROM %s;%s",
+		    MovedPreamble(), REPOSITORY_NAME, repository.path, REPOSITORY_NAME, REPOSITORY_URL, EXTENSION_NAME,
+		    REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
+	}
+	if (ExtensionRepositoryManager::GetAccess(db) == ExtensionRepositoryAccess::FORBIDDEN) {
+		throw MissingExtensionException("%sThe %s repository is configured, but allow_extension_repositories is set to "
+		                                "'forbidden', so extensions from it cannot be loaded.%s",
+		                                MovedPreamble(), REPOSITORY_NAME, MoreInformation());
+	}
+	if (!IsInstalledFromRepository(db, fs)) {
+		throw MissingExtensionException("%sThe %s repository is already configured. Install the extension from it once:\n"
+		                                "\n"
+		                                "    SET allow_extension_repositories = 'allowed';\n"
+		                                "    INSTALL %s FROM %s;\n"
+		                                "\n"
+		                                "Then load it in each session with:\n"
+		                                "\n"
+		                                "    LOAD %s FROM %s;%s",
+		                                MovedPreamble(), REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME,
+		                                EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
 	}
 
-	auto &arg = arguments[0];
-
-	if (arg->HasParameter()) {
-		throw ParameterNotResolvedException();
-	}
-	if (!arg->IsFoldable()) {
-		throw BinderException("inflect: format argument must be constant");
-	}
-
-	if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-		throw InvalidInputException("First argument to inflect() must be a VARCHAR function name");
-	}
-
-	auto function_name = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-
-	// The format name need to be constant.
-	auto it = transformer_map.find(function_name);
-	if (it == transformer_map.end()) {
-		throw InvalidInputException("Unknown inflection '%s'. Supported: camel, class, pascal, snake, kebab, train, title, "
-		                            "table, sentence, upper, lower",
-		                            function_name.c_str());
-	}
-	TransformFunc transform = it->second;
-
-	// Check for strip_accents (3rd argument)
-	bool strip_accents = false;
-	if (arguments.size() == 3) {
-		auto &sa_arg = arguments[2];
-		if (sa_arg->HasParameter()) {
-			throw ParameterNotResolvedException();
+	// The repository is trusted and the extension is installed from it: load that build. DuckDB holds the load lock
+	// for this name while this stub initializes, so the real extension is loaded under an alias; its functions are
+	// registered as usual.
+	ExtensionLoadOptions options(EXTENSION_NAME);
+	options.repository = REPOSITORY_NAME;
+	options.alias = Identifier(string(EXTENSION_NAME) + "_" + REPOSITORY_NAME);
+	try {
+		ExtensionHelper::LoadExternalExtension(db, fs, options);
+	} catch (std::exception &ex) {
+		ErrorData error(ex);
+		if (error.Type() != ExceptionType::IO || !StringUtil::Contains(error.RawMessage(), "signature")) {
+			throw;
 		}
-		if (!sa_arg->IsFoldable()) {
-			throw BinderException("inflect: strip_accents argument must be constant");
-		}
-		strip_accents = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(context, *sa_arg));
+		throw MissingExtensionException(
+		    "%sThe %s extension installed from the %s repository failed signature verification. The file may be "
+		    "damaged, or it was signed with a key that this repository definition does not trust. Reinstall it:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "If loading still fails the same way, refresh the repository's signing keys and reinstall:\n"
+		    "\n"
+		    "    CREATE OR REPLACE EXTENSION REPOSITORY %s WITH PREFIX '%s';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Do not use -unsigned to work around this.%s",
+		    MovedPreamble(), EXTENSION_NAME, REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME, REPOSITORY_NAME,
+		    REPOSITORY_URL, EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
 	}
-
-	// We should deal with the type here now.
-	bound_function.SetReturnType(InflectLogicalType(arguments[1]->GetReturnType(), transform, true, strip_accents));
-
-	return make_uniq<InflectScalarBindData>(transform, strip_accents);
-}
-
-void InflectStringFunc(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &bind_data = func_expr.BindInfo()->Cast<InflectScalarBindData>();
-	bool strip_accents = bind_data.strip_accents;
-
-	auto &type_vector = args.data[0];
-	auto &source = args.data[1];
-
-	BinaryExecutor::Execute<string_t, string_t, string_t>(
-	    type_vector, source, result, [&result, strip_accents](string_t name, string_t data) -> string_t {
-		    auto function_name = name.GetString();
-		    auto value = data.GetString();
-
-		    if (strip_accents) {
-			    value = StripAccentsString(value);
-		    }
-
-		    auto it = transformer_map.find(function_name);
-		    if (it == transformer_map.end()) {
-			    throw InvalidInputException(
-			        "Unknown inflection '%s'. Supported: camel, class, pascal, snake, kebab, train, title, "
-			        "table, sentence, upper, lower",
-			        function_name.c_str());
-		    }
-		    TransformFunc transform = it->second;
-
-		    char *change_result = transform(value.c_str());
-		    if (!change_result) {
-			    throw InternalException("Inflector transform returned null - memory allocation failed");
-		    }
-		    string_t return_result = StringVector::AddString(result, change_result);
-		    free_c_string(change_result);
-		    return return_result;
-	    });
-}
-
-// Recursively populate `result` from `source` where the two vectors have
-// physically identical layouts but may differ in struct field names. The
-// result vector's type tree (already set by InflectScalarBind to the
-// renamed type) is preserved; data is copied positionally so renames at
-// every nesting level take effect.
-static void InflectRenameCopy(Vector &source, Vector &result, idx_t count) {
-	switch (result.GetType().id()) {
-	case LogicalTypeId::STRUCT: {
-		source.Flatten();
-		auto &source_children = StructVector::GetEntries(source);
-		auto &result_children = StructVector::GetEntries(result);
-		D_ASSERT(source_children.size() == result_children.size());
-
-		for (idx_t i = 0; i < result_children.size(); i++) {
-			InflectRenameCopy(source_children[i], result_children[i], count);
-		}
-		FlatVector::CopyValidity(result, source, count);
-		FlatVector::SetSize(result, count);
-		return;
-	}
-	case LogicalTypeId::LIST:
-	case LogicalTypeId::MAP: {
-		source.Flatten();
-
-		auto src_entries = FlatVector::GetData<list_entry_t>(source);
-		auto res_entries = FlatVector::GetDataMutable<list_entry_t>(result);
-		memcpy(res_entries, src_entries, sizeof(list_entry_t) * count);
-		FlatVector::CopyValidity(result, source, count);
-
-		idx_t list_size = ListVector::GetListSize(source);
-		ListVector::Reserve(result, list_size);
-
-		auto &source_child = ListVector::GetChildMutable(source);
-		auto &result_child = ListVector::GetChildMutable(result);
-		InflectRenameCopy(source_child, result_child, list_size);
-		ListVector::SetListSize(result, list_size);
-		FlatVector::SetSize(result, count);
-		return;
-	}
-	default:
-		// Leaf or non-renamed-aware type: types are identical, plain reference is safe.
-		result.Reference(source);
-		return;
-	}
-}
-
-void InflectScalarFunc(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &source = args.data[1];
-	InflectRenameCopy(source, result, args.size());
-	result.Verify();
-}
-
-// Load all inflector functions
-void LoadInternal(ExtensionLoader &loader) {
-	// Transform functions - case conversion
-	RegisterInflectorTransform(loader, "inflector_to_class_case", cruet_to_class_case,
-	                           "Converts a string to ClassCase (PascalCase) format",
-	                           "inflector_to_class_case('hello_world')", "text", {"text", "case_conversion"});
-	RegisterInflectorTransform(loader, "inflector_to_camel_case", cruet_to_camel_case,
-	                           "Converts a string to camelCase format",
-	                           "inflector_to_camel_case('hello_world')", "text", {"text", "case_conversion"});
-	RegisterInflectorTransform(loader, "inflector_to_pascal_case", cruet_to_pascal_case,
-	                           "Converts a string to PascalCase format",
-	                           "inflector_to_pascal_case('hello_world')", "text", {"text", "case_conversion"});
-	RegisterInflectorTransform(loader, "inflector_to_screamingsnake_case", cruet_to_screamingsnake_case,
-	                           "Converts a string to SCREAMING_SNAKE_CASE format",
-	                           "inflector_to_screamingsnake_case('helloWorld')", "text", {"text", "case_conversion"});
-	RegisterInflectorTransform(loader, "inflector_to_snake_case", cruet_to_snake_case,
-	                           "Converts a string to snake_case format",
-	                           "inflector_to_snake_case('helloWorld')", "text", {"text", "case_conversion"});
-	RegisterInflectorTransform(loader, "inflector_to_kebab_case", cruet_to_kebab_case,
-	                           "Converts a string to kebab-case format",
-	                           "inflector_to_kebab_case('helloWorld')", "text", {"text", "case_conversion"});
-	RegisterInflectorTransform(loader, "inflector_to_train_case", cruet_to_train_case,
-	                           "Converts a string to Train-Case format",
-	                           "inflector_to_train_case('helloWorld')", "text", {"text", "case_conversion"});
-	RegisterInflectorTransform(loader, "inflector_to_sentence_case", cruet_to_sentence_case,
-	                           "Converts a string to Sentence case format",
-	                           "inflector_to_sentence_case('helloWorld')", "text", {"text", "case_conversion"});
-	RegisterInflectorTransform(loader, "inflector_to_title_case", cruet_to_title_case,
-	                           "Converts a string to Title Case format",
-	                           "inflector_to_title_case('hello_world')", "text", {"text", "case_conversion"});
-
-	// Transform functions - naming conventions
-	RegisterInflectorTransform(loader, "inflector_to_table_case", cruet_to_table_case,
-	                           "Converts a string to table_cases format (snake_case plural)",
-	                           "inflector_to_table_case('FooBar')", "text", {"text", "naming"});
-	RegisterInflectorTransform(loader, "inflector_to_foreign_key", cruet_to_foreign_key,
-	                           "Converts a class name to a foreign key column name",
-	                           "inflector_to_foreign_key('Message')", "class_name", {"text", "naming"});
-	RegisterInflectorTransform(loader, "inflector_demodulize", cruet_demodulize,
-	                           "Removes the module part from a fully qualified name",
-	                           "inflector_demodulize('ActiveRecord::CoreExtensions::String')", "qualified_name", {"text", "naming"});
-	RegisterInflectorTransform(loader, "inflector_deconstantize", cruet_deconstantize,
-	                           "Removes the rightmost segment from a constant expression",
-	                           "inflector_deconstantize('Net::HTTP')", "constant", {"text", "naming"});
-
-	// Transform functions - inflection
-	RegisterInflectorTransform(loader, "inflector_ordinalize", cruet_ordinalize,
-	                           "Converts a number string to its ordinal form (1st, 2nd, 3rd, etc.)",
-	                           "inflector_ordinalize('1')", "number", {"text", "inflection"});
-	RegisterInflectorTransform(loader, "inflector_deordinalize", cruet_deordinalize,
-	                           "Removes the ordinal suffix from a string (1st -> 1)",
-	                           "inflector_deordinalize('1st')", "ordinal", {"text", "inflection"});
-	RegisterInflectorTransform(loader, "inflector_to_plural", cruet_to_plural,
-	                           "Returns the plural form of a word",
-	                           "inflector_to_plural('person')", "word", {"text", "inflection"});
-	RegisterInflectorTransform(loader, "inflector_to_singular", cruet_to_singular,
-	                           "Returns the singular form of a word",
-	                           "inflector_to_singular('people')", "word", {"text", "inflection"});
-
-	// Predicate functions - case detection
-	RegisterInflectorPredicate(loader, "inflector_is_class_case", cruet_is_class_case,
-	                           "Returns true if the string is in ClassCase (PascalCase) format",
-	                           "inflector_is_class_case('HelloWorld')", "text", {"text", "case_detection"});
-	RegisterInflectorPredicate(loader, "inflector_is_camel_case", cruet_is_camel_case,
-	                           "Returns true if the string is in camelCase format",
-	                           "inflector_is_camel_case('helloWorld')", "text", {"text", "case_detection"});
-	RegisterInflectorPredicate(loader, "inflector_is_pascal_case", cruet_is_pascal_case,
-	                           "Returns true if the string is in PascalCase format",
-	                           "inflector_is_pascal_case('HelloWorld')", "text", {"text", "case_detection"});
-	RegisterInflectorPredicate(loader, "inflector_is_screamingsnake_case", cruet_is_screamingsnake_case,
-	                           "Returns true if the string is in SCREAMING_SNAKE_CASE format",
-	                           "inflector_is_screamingsnake_case('HELLO_WORLD')", "text", {"text", "case_detection"});
-	RegisterInflectorPredicate(loader, "inflector_is_snake_case", cruet_is_snake_case,
-	                           "Returns true if the string is in snake_case format",
-	                           "inflector_is_snake_case('hello_world')", "text", {"text", "case_detection"});
-	RegisterInflectorPredicate(loader, "inflector_is_kebab_case", cruet_is_kebab_case,
-	                           "Returns true if the string is in kebab-case format",
-	                           "inflector_is_kebab_case('hello-world')", "text", {"text", "case_detection"});
-	RegisterInflectorPredicate(loader, "inflector_is_train_case", cruet_is_train_case,
-	                           "Returns true if the string is in Train-Case format",
-	                           "inflector_is_train_case('Hello-World')", "text", {"text", "case_detection"});
-	RegisterInflectorPredicate(loader, "inflector_is_sentence_case", cruet_is_sentence_case,
-	                           "Returns true if the string is in Sentence case format",
-	                           "inflector_is_sentence_case('Hello world')", "text", {"text", "case_detection"});
-	RegisterInflectorPredicate(loader, "inflector_is_title_case", cruet_is_title_case,
-	                           "Returns true if the string is in Title Case format",
-	                           "inflector_is_title_case('Hello World')", "text", {"text", "case_detection"});
-
-	// Predicate functions - naming detection
-	RegisterInflectorPredicate(loader, "inflector_is_table_case", cruet_is_table_case,
-	                           "Returns true if the string is in table_case format (snake_case plural)",
-	                           "inflector_is_table_case('foo_bars')", "text", {"text", "naming"});
-	RegisterInflectorPredicate(loader, "inflector_is_foreign_key", cruet_is_foreign_key,
-	                           "Returns true if the string is in foreign key format (ends with _id)",
-	                           "inflector_is_foreign_key('message_id')", "text", {"text", "naming"});
-
-	// Table function: inflect column names in query results
-	auto inflect_table_function =
-	    TableFunction("inflect", {LogicalType::VARCHAR, LogicalType::TABLE}, nullptr, InflectTableBind);
-	inflect_table_function.in_out_function = InflectInOut;
-	inflect_table_function.in_out_function_final = InflectInOutFinalize;
-	inflect_table_function.GetSignature().WithTypedKwargs(
-	    "options", [](TypedKwargs &options) { options.Add("strip_accents", LogicalType::BOOLEAN); });
-	CreateTableFunctionInfo table_func_info(inflect_table_function);
-	FunctionDescription table_func_desc;
-	table_func_desc.description = "Transforms column names in query results using the specified case format";
-	table_func_desc.examples.push_back("FROM inflect('snake', SELECT firstName, lastName FROM users)");
-	table_func_desc.parameter_names.push_back("format");
-	table_func_desc.parameter_names.push_back("query");
-	table_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
-	table_func_desc.parameter_types.push_back(LogicalType::TABLE);
-	table_func_desc.categories.push_back("text");
-	table_func_desc.categories.push_back("case_conversion");
-	table_func_info.descriptions.push_back(std::move(table_func_desc));
-	loader.RegisterFunction(table_func_info);
-
-	// Scalar functions: inflect string values or struct field names
-	auto scalar_function_set = ScalarFunctionSet("inflect");
-	auto inflect_string_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                                              LogicalType::VARCHAR, InflectStringFunc, InflectScalarBind);
-	scalar_function_set.AddFunction(inflect_string_function);
-
-	auto inflect_struct_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::ANY}, LogicalType::ANY,
-	                                              InflectScalarFunc, InflectScalarBind);
-	scalar_function_set.AddFunction(inflect_struct_function);
-
-	// 3-argument overloads with strip_accents boolean
-	auto inflect_string_sa_function =
-	    ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN},
-	                   LogicalType::VARCHAR, InflectStringFunc, InflectScalarBind);
-	scalar_function_set.AddFunction(inflect_string_sa_function);
-
-	auto inflect_struct_sa_function =
-	    ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::ANY, LogicalType::BOOLEAN}, LogicalType::ANY,
-	                   InflectScalarFunc, InflectScalarBind);
-	scalar_function_set.AddFunction(inflect_struct_sa_function);
-
-	scalar_function_set.SetFallible();
-	CreateScalarFunctionInfo scalar_func_info(scalar_function_set);
-
-	// Description for string variant
-	FunctionDescription string_func_desc;
-	string_func_desc.description = "Transforms a string value using the specified case format";
-	string_func_desc.examples.push_back("inflect('snake', 'helloWorld')");
-	string_func_desc.parameter_names.push_back("format");
-	string_func_desc.parameter_names.push_back("text");
-	string_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
-	string_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
-	string_func_desc.categories.push_back("text");
-	string_func_desc.categories.push_back("case_conversion");
-	scalar_func_info.descriptions.push_back(std::move(string_func_desc));
-
-	// Description for struct variant
-	FunctionDescription struct_func_desc;
-	struct_func_desc.description = "Transforms struct field names using the specified case format";
-	struct_func_desc.examples.push_back("inflect('snake', {firstName: 'John', lastName: 'Doe'})");
-	struct_func_desc.parameter_names.push_back("format");
-	struct_func_desc.parameter_names.push_back("value");
-	struct_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
-	struct_func_desc.parameter_types.push_back(LogicalType::ANY);
-	struct_func_desc.categories.push_back("struct");
-	struct_func_desc.categories.push_back("case_conversion");
-	scalar_func_info.descriptions.push_back(std::move(struct_func_desc));
-
-	loader.RegisterFunction(scalar_func_info);
-
-	// --- Acronym configuration via DuckDB setting ---
-	auto &db = loader.GetDatabaseInstance();
-	auto &config = DBConfig::GetConfig(db);
-	config.AddExtensionOption(
-	    "inflector_acronyms",
-	    "List of acronyms preserved as uppercase in case conversions (e.g., HTML, API)",
-	    LogicalType::LIST(LogicalType::VARCHAR), Value::LIST(LogicalType::VARCHAR, vector<Value>()),
-	    [](ClientContext &context, SetScope scope, Value &parameter) {
-		    if (parameter.IsNull() || ListValue::GetChildren(parameter).empty()) {
-			    cruet_clear_acronyms();
-			    return;
-		    }
-		    auto &children = ListValue::GetChildren(parameter);
-		    string csv;
-		    for (idx_t i = 0; i < children.size(); i++) {
-			    if (i > 0) {
-				    csv += ",";
-			    }
-			    csv += children[i].GetValue<string>();
-		    }
-		    cruet_set_acronyms(csv.c_str());
-	    });
-
-	QueryFarmSendTelemetry(loader, "inflector", "2026102001");
 }
 
 void InflectorExtension::Load(ExtensionLoader &loader) {
-	LoadInternal(loader);
+	LoadFromQueryFarmOrExplain(loader.GetDatabaseInstance());
 }
+
 std::string InflectorExtension::Name() {
-	return "inflector";
+	return EXTENSION_NAME;
 }
 
 std::string InflectorExtension::Version() const {
-	return "2026102001";
+	return EXTENSION_VERSION;
 }
 
 } // namespace duckdb
@@ -623,6 +167,6 @@ std::string InflectorExtension::Version() const {
 extern "C" {
 
 DUCKDB_CPP_EXTENSION_ENTRY(inflector, loader) {
-	duckdb::LoadInternal(loader);
+	duckdb::LoadFromQueryFarmOrExplain(loader.GetDatabaseInstance());
 }
 }
