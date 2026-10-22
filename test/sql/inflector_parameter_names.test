@@ -67,6 +67,6 @@ SELECT inflector_to_plural('person');
 people
 
 query II
-FROM inflect('snake', SELECT 1 AS firstName, 2 AS lastName);
+SELECT first_name, last_name FROM inflect('snake', (SELECT 1 AS firstName, 2 AS lastName));
 ----
 1	2
