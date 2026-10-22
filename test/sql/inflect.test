@@ -679,3 +679,21 @@ query T
 SELECT inflect('snake', MAP(['k'], [{'firstName': 1}]));
 ----
 {k={'first_name': 1}}
+
+# The table-form example in the function description parses and runs on DuckDB 2.0
+query T
+SELECT examples[1] FROM duckdb_functions()
+WHERE function_name = 'inflect' AND function_type = 'table';
+----
+FROM inflect('snake', (SELECT 'John' AS firstName, 'Doe' AS lastName))
+
+query II
+FROM inflect('snake', (SELECT 'John' AS firstName, 'Doe' AS lastName));
+----
+John	Doe
+
+query TT
+SELECT column_name, column_type FROM (DESCRIBE FROM inflect('snake', (SELECT 'John' AS firstName, 'Doe' AS lastName)));
+----
+first_name	VARCHAR
+last_name	VARCHAR

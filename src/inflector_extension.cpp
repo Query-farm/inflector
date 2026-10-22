@@ -530,7 +530,7 @@ void LoadInternal(ExtensionLoader &loader) {
 	CreateTableFunctionInfo table_func_info(inflect_table_function);
 	FunctionDescription table_func_desc;
 	table_func_desc.description = "Transforms column names in query results using the specified case format";
-	table_func_desc.examples.push_back("FROM inflect('snake', SELECT firstName, lastName FROM users)");
+	table_func_desc.examples.push_back("FROM inflect('snake', (SELECT 'John' AS firstName, 'Doe' AS lastName))");
 	table_func_desc.parameter_names.push_back("format");
 	table_func_desc.parameter_names.push_back("query");
 	table_func_desc.parameter_types.push_back(LogicalType::VARCHAR);
@@ -619,7 +619,7 @@ void LoadInternal(ExtensionLoader &loader) {
 		    cruet_set_acronyms(csv.c_str());
 	    });
 
-	QueryFarmSendTelemetry(loader, "inflector", "2026102101");
+	QueryFarmSendTelemetry(loader, "inflector", "2026102102");
 }
 
 void InflectorExtension::Load(ExtensionLoader &loader) {
@@ -630,7 +630,7 @@ std::string InflectorExtension::Name() {
 }
 
 std::string InflectorExtension::Version() const {
-	return "2026102101";
+	return "2026102102";
 }
 
 } // namespace duckdb
