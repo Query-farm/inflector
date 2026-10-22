@@ -20,6 +20,11 @@
 
 namespace duckdb {
 
+//! A positional-only parameter with a real name (bare types would be reported as col0, col1, ...)
+static FunctionParameter Positional(const char *name, LogicalType type) {
+	return FunctionParameter(name, std::move(type), {}, FunctionParameterKind::POSITIONAL_ONLY);
+}
+
 static std::string StripAccentsString(const std::string &input) {
 	auto stripped = utf8proc_remove_accents((const utf8proc_uint8_t *)input.c_str(),
 	                                        (utf8proc_ssize_t)input.size());
@@ -51,7 +56,7 @@ inline void RegisterInflectorTransform(ExtensionLoader &loader, const char *sql_
 		    });
 	};
 
-	ScalarFunction fun(sql_name, {LogicalType::VARCHAR}, LogicalType::VARCHAR, fun_impl);
+	ScalarFunction fun(sql_name, {Positional(param_name, LogicalType::VARCHAR)}, LogicalType::VARCHAR, fun_impl);
 	fun.SetFallible();
 	CreateScalarFunctionInfo info(fun);
 
@@ -79,7 +84,7 @@ inline void RegisterInflectorPredicate(ExtensionLoader &loader, const char *sql_
 		});
 	};
 
-	ScalarFunction fun(sql_name, {LogicalType::VARCHAR}, LogicalType::BOOLEAN, fun_impl);
+	ScalarFunction fun(sql_name, {Positional(param_name, LogicalType::VARCHAR)}, LogicalType::BOOLEAN, fun_impl);
 	CreateScalarFunctionInfo info(fun);
 
 	FunctionDescription func_desc;
@@ -513,7 +518,11 @@ void LoadInternal(ExtensionLoader &loader) {
 
 	// Table function: inflect column names in query results
 	auto inflect_table_function =
-	    TableFunction("inflect", {LogicalType::VARCHAR, LogicalType::TABLE}, nullptr, InflectTableBind);
+	    TableFunction("inflect",
+	                  FunctionSignature({Positional("format", LogicalType::VARCHAR),
+	                                     Positional("query", LogicalType::TABLE)},
+	                                    LogicalType::INVALID),
+	                  nullptr, InflectTableBind);
 	inflect_table_function.in_out_function = InflectInOut;
 	inflect_table_function.in_out_function_final = InflectInOutFinalize;
 	inflect_table_function.GetSignature().WithTypedKwargs(
@@ -533,23 +542,29 @@ void LoadInternal(ExtensionLoader &loader) {
 
 	// Scalar functions: inflect string values or struct field names
 	auto scalar_function_set = ScalarFunctionSet("inflect");
-	auto inflect_string_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                                              LogicalType::VARCHAR, InflectStringFunc, InflectScalarBind);
+	auto inflect_string_function =
+	    ScalarFunction("inflect", {Positional("format", LogicalType::VARCHAR), Positional("text", LogicalType::VARCHAR)},
+	                   LogicalType::VARCHAR, InflectStringFunc, InflectScalarBind);
 	scalar_function_set.AddFunction(inflect_string_function);
 
-	auto inflect_struct_function = ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::ANY}, LogicalType::ANY,
-	                                              InflectScalarFunc, InflectScalarBind);
+	auto inflect_struct_function =
+	    ScalarFunction("inflect", {Positional("format", LogicalType::VARCHAR), Positional("value", LogicalType::ANY)},
+	                   LogicalType::ANY, InflectScalarFunc, InflectScalarBind);
 	scalar_function_set.AddFunction(inflect_struct_function);
 
 	// 3-argument overloads with strip_accents boolean
 	auto inflect_string_sa_function =
-	    ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN},
+	    ScalarFunction("inflect",
+	                   {Positional("format", LogicalType::VARCHAR), Positional("text", LogicalType::VARCHAR),
+	                    Positional("strip_accents", LogicalType::BOOLEAN)},
 	                   LogicalType::VARCHAR, InflectStringFunc, InflectScalarBind);
 	scalar_function_set.AddFunction(inflect_string_sa_function);
 
 	auto inflect_struct_sa_function =
-	    ScalarFunction("inflect", {LogicalType::VARCHAR, LogicalType::ANY, LogicalType::BOOLEAN}, LogicalType::ANY,
-	                   InflectScalarFunc, InflectScalarBind);
+	    ScalarFunction("inflect",
+	                   {Positional("format", LogicalType::VARCHAR), Positional("value", LogicalType::ANY),
+	                    Positional("strip_accents", LogicalType::BOOLEAN)},
+	                   LogicalType::ANY, InflectScalarFunc, InflectScalarBind);
 	scalar_function_set.AddFunction(inflect_struct_sa_function);
 
 	scalar_function_set.SetFallible();
@@ -604,7 +619,7 @@ void LoadInternal(ExtensionLoader &loader) {
 		    cruet_set_acronyms(csv.c_str());
 	    });
 
-	QueryFarmSendTelemetry(loader, "inflector", "2026102001");
+	QueryFarmSendTelemetry(loader, "inflector", "2026102101");
 }
 
 void InflectorExtension::Load(ExtensionLoader &loader) {
@@ -615,7 +630,7 @@ std::string InflectorExtension::Name() {
 }
 
 std::string InflectorExtension::Version() const {
-	return "2026102001";
+	return "2026102101";
 }
 
 } // namespace duckdb

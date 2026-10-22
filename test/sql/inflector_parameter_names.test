@@ -1,0 +1,72 @@
+# name: test/sql/inflector_parameter_names.test
+# description: every function parameter is reported with a real name, not col0, col1, ...
+# group: [sql]
+
+require inflector
+
+query IIT
+SELECT function_name, function_type, parameters FROM duckdb_functions()
+WHERE extension_name = 'inflector'
+ORDER BY function_name, function_type, len(parameters), parameter_types::VARCHAR;
+----
+inflect	scalar	[format, value]
+inflect	scalar	[format, text]
+inflect	scalar	[format, value, strip_accents]
+inflect	scalar	[format, text, strip_accents]
+inflect	table	[format, query, strip_accents]
+inflector_deconstantize	scalar	[constant]
+inflector_demodulize	scalar	[qualified_name]
+inflector_deordinalize	scalar	[ordinal]
+inflector_is_camel_case	scalar	[text]
+inflector_is_class_case	scalar	[text]
+inflector_is_foreign_key	scalar	[text]
+inflector_is_kebab_case	scalar	[text]
+inflector_is_pascal_case	scalar	[text]
+inflector_is_screamingsnake_case	scalar	[text]
+inflector_is_sentence_case	scalar	[text]
+inflector_is_snake_case	scalar	[text]
+inflector_is_table_case	scalar	[text]
+inflector_is_title_case	scalar	[text]
+inflector_is_train_case	scalar	[text]
+inflector_ordinalize	scalar	[number]
+inflector_to_camel_case	scalar	[text]
+inflector_to_class_case	scalar	[text]
+inflector_to_foreign_key	scalar	[class_name]
+inflector_to_kebab_case	scalar	[text]
+inflector_to_pascal_case	scalar	[text]
+inflector_to_plural	scalar	[word]
+inflector_to_screamingsnake_case	scalar	[text]
+inflector_to_sentence_case	scalar	[text]
+inflector_to_singular	scalar	[word]
+inflector_to_snake_case	scalar	[text]
+inflector_to_table_case	scalar	[text]
+inflector_to_title_case	scalar	[text]
+inflector_to_train_case	scalar	[text]
+
+# No parameter may fall back to a positional colN name
+query I
+SELECT count(*) FROM (SELECT unnest(parameters) AS p FROM duckdb_functions() WHERE extension_name = 'inflector')
+WHERE regexp_matches(p, '^col[0-9]+$');
+----
+0
+
+# Positional calls work as before
+query T
+SELECT inflect('snake', 'helloWorld');
+----
+hello_world
+
+query T
+SELECT inflect('snake', {'firstName': 1}, false);
+----
+{'first_name': 1}
+
+query T
+SELECT inflector_to_plural('person');
+----
+people
+
+query II
+FROM inflect('snake', SELECT 1 AS firstName, 2 AS lastName);
+----
+1	2
