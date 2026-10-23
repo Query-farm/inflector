@@ -7,22 +7,15 @@
   </a>
 </p>
 
-# DuckDB Inflector Extension by [Query.Farm](https://query.farm)
+# Inflector Extension for DuckDB
 
-[![DuckDB](https://img.shields.io/badge/DuckDB-community_extension-fdf1e0?logo=duckdb&logoColor=fff000)](https://duckdb.org/community_extensions/extensions/inflector.html)
-[![v1.5 build](https://github.com/Query-farm/inflector/actions/workflows/MainDistributionPipeline.yml/badge.svg?branch=v1.5)](https://github.com/Query-farm/inflector/actions/workflows/MainDistributionPipeline.yml?query=branch%3Av1.5)
+[![DuckDB](https://img.shields.io/badge/DuckDB-extension-fdf1e0?logo=duckdb&logoColor=fff000)](https://query.farm/products/extensions/inflector/)
+[![v2.0 build](https://github.com/Query-farm/inflector/actions/workflows/MainDistributionPipeline.yml/badge.svg?branch=v2.0)](https://github.com/Query-farm/inflector/actions/workflows/MainDistributionPipeline.yml?query=branch%3Av2.0)
 
-The **Inflector** extension brings powerful string case transformation and inflection capabilities directly to your SQL queries in DuckDB. Transform column names, validate naming conventions, handle pluralization, and more—all without leaving your database environment.
+Transform string case and apply English inflection rules in DuckDB.
 
 ## Documentation
 
 Full documentation, including installation, usage, the function reference, and cookbook examples, is available at:
 
-**[https://query.farm/products/extensions/inflector](https://query.farm/products/extensions/inflector)**
-
-## Installation
-
-```sql
-INSTALL inflector FROM community;
-LOAD inflector;
-```
+**[https://query.farm/products/extensions/inflector/](https://query.farm/products/extensions/inflector/)**
