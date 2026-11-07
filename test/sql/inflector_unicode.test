@@ -1,0 +1,57 @@
+# name: test/sql/inflector_unicode.test
+# description: Unicode (accents, Greek, Cyrillic, CJK) and embedded NUL bytes through every case function
+# group: [sql]
+
+require inflector
+
+# Accented Latin
+query TTTTTTTTTTT
+SELECT inflector_to_snake_case('ÉcoleNormale'), inflector_to_camel_case('crème_brûlée'),
+       inflector_to_pascal_case('über_straße'), inflector_to_kebab_case('ÜberStraße'),
+       inflector_to_train_case('naïve_café'), inflector_to_title_case('señor_niño'),
+       inflector_to_sentence_case('ÀlaCarte'), inflector_to_screamingsnake_case('crème_brûlée'),
+       inflector_to_class_case('école_normale'), inflector_to_table_case('Café'), inflector_to_foreign_key('Café');
+----
+école_normale	crèmeBrûlée	ÜberStraße	über-straße	Naïve-Café	Señor Niño	Àla carte	CRÈME_BRÛLÉE	ÉcoleNormale	cafés	café_id
+
+# Greek and Cyrillic have case, so word boundaries are found
+query TT
+SELECT inflector_to_snake_case('ΑλφαΒήτα'), inflector_to_camel_case('привет_мир');
+----
+αλφα_βήτα	приветМир
+
+# CJK has no case: characters pass through unchanged, separators are applied
+query TTTT
+SELECT inflector_to_snake_case('東京Tower'), inflector_to_camel_case('東京 タワー'),
+       inflector_to_pascal_case('日本語_テキスト'), inflector_to_title_case('数据_分析');
+----
+東京tower	東京タワー	日本語テキスト	数据 分析
+
+query TTTT
+SELECT inflector_is_snake_case('crème_brûlée'), inflector_is_camel_case('crèmeBrûlée'),
+       inflector_is_pascal_case('ÜberStraße'), inflector_is_snake_case('東京_タワー');
+----
+true	true	true	true
+
+# inflect() with and without accent stripping; full Unicode upper/lower
+query TTTT
+SELECT inflect('snake', 'ÉcoleNormale'), inflect('snake', 'ÉcoleNormale', true), inflect('upper', 'straße'),
+       inflect('lower', 'ÀBC');
+----
+école_normale	ecole_normale	STRASSE	àbc
+
+query T
+SELECT inflect('snake', {'prénomUtilisateur': 1, '東京Tower': 2}, true);
+----
+{'prenom_utilisateur': 1, '東京tower': 2}
+
+query T
+SELECT column_name FROM (DESCRIBE SELECT * FROM inflect('camel', (SELECT 1 AS "Ñandú_Count"), strip_accents := true));
+----
+nanduCount
+
+# Embedded NUL bytes are preserved (strings cross the FFI boundary with an explicit length)
+query IT
+SELECT length(inflect('upper', 'a' || chr(0) || 'b')), inflect('upper', 'a' || chr(0) || 'b') = 'A' || chr(0) || 'B';
+----
+3	true

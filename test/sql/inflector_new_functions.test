@@ -1,0 +1,86 @@
+# name: test/sql/inflector_new_functions.test
+# description: inflector_humanize, inflector_parameterize, inflector_classify and duplicate-name handling
+# group: [sql]
+
+require inflector
+
+query TTTTT
+SELECT inflector_humanize('author_id'), inflector_humanize('employee_salary'), inflector_humanize('employeeSalary'),
+       inflector_humanize('_id'), inflector_humanize('');
+----
+Author	Employee salary	Employee salary	Id	(empty)
+
+query TTTTT
+SELECT inflector_parameterize('Crème Brûlée: A Recipe!'), inflector_parameterize('  --Hello, World--  '),
+       inflector_parameterize('東京 タワー 2026'), inflector_parameterize('!!!'), inflector_parameterize('Donald E. Knuth');
+----
+creme-brulee-a-recipe	hello-world	東京-タワー-2026	(empty)	donald-e-knuth
+
+query TTTT
+SELECT inflector_classify('egg_and_hams'), inflector_classify('people'), inflector_classify('posts'),
+       inflector_classify('UserAccounts');
+----
+EggAndHam	Person	Post	UserAccount
+
+query T
+SELECT inflector_parameterize(w) FROM (VALUES ('Ünïcödé Stráße'), (NULL), ('a_b c')) t(w);
+----
+unicode-straße
+NULL
+a-b-c
+
+# Table function: names that collide after renaming are made unique in column order
+query T
+SELECT column_name FROM (DESCRIBE SELECT * FROM inflect('snake',
+    (SELECT 1 AS fooBar, 2 AS foo_bar, 3 AS "Foo Bar", 4 AS foo_bar_1)));
+----
+foo_bar
+foo_bar_1
+foo_bar_2
+foo_bar_1_1
+
+query IIII
+SELECT * FROM inflect('snake', (SELECT 1 AS fooBar, 2 AS foo_bar, 3 AS "Foo Bar", 4 AS foo_bar_1));
+----
+1	2	3	4
+
+# Comparison is case-insensitive, like DuckDB identifiers
+query T
+SELECT column_name FROM (DESCRIBE SELECT * FROM inflect('upper', (SELECT 1 AS abc, 2 AS "ABC_x", 3 AS "Abc")));
+----
+ABC
+ABC_X
+ABC_1
+
+# Names that inflect to nothing keep their original name
+query T
+SELECT column_name FROM (DESCRIBE SELECT * FROM inflect('snake', (SELECT 1 AS "___")));
+----
+___
+
+# Struct field names get the same treatment (DuckDB rejects duplicate struct field names)
+query T
+SELECT inflect('snake', {'fooBar': 1, 'foo_bar': 2, 'nested': {'aB': 3, 'a_b': 4}});
+----
+{'foo_bar': 1, 'foo_bar_1': 2, 'nested': {'a_b': 3, 'a_b_1': 4}}
+
+query T
+SELECT inflect('snake', {'___': 1});
+----
+{'___': 1}
+
+# Unknown formats are rejected
+statement error
+SELECT inflect('humanize', 'x');
+----
+Unknown inflection 'humanize'
+
+statement error
+SELECT * FROM inflect('nope', (SELECT 1 AS a));
+----
+Unknown inflection 'nope'
+
+statement error
+SELECT inflect(f, 'x') FROM (VALUES ('snake')) t(f);
+----
+format argument must be constant

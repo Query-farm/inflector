@@ -1,0 +1,98 @@
+# name: test/sql/inflector_acronyms_session.test
+# description: inflector_acronyms is session scoped: SET in one connection must not affect another
+# group: [sql]
+
+require inflector
+
+statement ok con1
+SET inflector_acronyms = ['HTML', 'API'];
+
+query T con1
+SELECT inflector_to_pascal_case('html_api_parser');
+----
+HTMLAPIParser
+
+# A second connection to the same database still has no acronyms
+query T con2
+SELECT inflector_to_pascal_case('html_api_parser');
+----
+HtmlApiParser
+
+query T con2
+SELECT inflect('pascal', {'html_parser': 1});
+----
+{'HtmlParser': 1}
+
+query T con1
+SELECT inflect('pascal', {'html_parser': 1});
+----
+{'HTMLParser': 1}
+
+query T con2
+SELECT column_name FROM (DESCRIBE SELECT * FROM inflect('camel', (SELECT 1 AS key_api)));
+----
+keyApi
+
+query T con1
+SELECT column_name FROM (DESCRIBE SELECT * FROM inflect('camel', (SELECT 1 AS key_api)));
+----
+keyAPI
+
+query T con1
+SELECT inflector_humanize('html_parser_id');
+----
+HTML parser
+
+# Each connection has its own value
+statement ok con2
+SET inflector_acronyms = ['JSON'];
+
+query TT con2
+SELECT inflector_to_pascal_case('json_html'), inflector_is_pascal_case('JSONHtml');
+----
+JSONHtml	true
+
+query T con1
+SELECT inflector_to_pascal_case('json_html');
+----
+JsonHTML
+
+# RESET restores the default (no acronyms) for that connection only
+statement ok con1
+RESET inflector_acronyms;
+
+query T con1
+SELECT inflector_to_pascal_case('html_parser');
+----
+HtmlParser
+
+query T con2
+SELECT inflector_to_pascal_case('json_parser');
+----
+JSONParser
+
+# A prepared statement picks up the setting at execution time
+statement ok con1
+PREPARE p AS SELECT inflector_to_pascal_case($1);
+
+query T con1
+EXECUTE p('api_client');
+----
+ApiClient
+
+statement ok con1
+SET inflector_acronyms = ['API'];
+
+query T con1
+EXECUTE p('api_client');
+----
+APIClient
+
+# Empty list, NULL elements and one-character tokens are ignored
+statement ok con1
+SET inflector_acronyms = [NULL, 'x', 'Url'];
+
+query T con1
+SELECT inflector_to_pascal_case('url_x_value');
+----
+URLXValue

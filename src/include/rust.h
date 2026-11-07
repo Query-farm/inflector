@@ -7,86 +7,117 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/**
+ * The operation performed by `inflector_transform` / `inflector_predicate`.
+ */
+typedef enum InflectorOp {
+  InflectorOp_ClassCase = 0,
+  InflectorOp_CamelCase = 1,
+  InflectorOp_PascalCase = 2,
+  InflectorOp_ScreamingSnakeCase = 3,
+  InflectorOp_SnakeCase = 4,
+  InflectorOp_KebabCase = 5,
+  InflectorOp_TrainCase = 6,
+  InflectorOp_SentenceCase = 7,
+  InflectorOp_TitleCase = 8,
+  InflectorOp_LowerCase = 9,
+  InflectorOp_UpperCase = 10,
+  InflectorOp_TableCase = 11,
+  InflectorOp_ForeignKey = 12,
+  InflectorOp_Demodulize = 13,
+  InflectorOp_Deconstantize = 14,
+  InflectorOp_Ordinalize = 15,
+  InflectorOp_Deordinalize = 16,
+  InflectorOp_Plural = 17,
+  InflectorOp_Singular = 18,
+  InflectorOp_Humanize = 19,
+  InflectorOp_Parameterize = 20,
+  InflectorOp_Classify = 21,
+} InflectorOp;
+
+/**
+ * Result status of an FFI call.
+ */
+typedef enum InflectorStatus {
+  InflectorStatus_Ok = 0,
+  /**
+   * The input was not valid UTF-8.
+   */
+  InflectorStatus_InvalidUtf8 = 1,
+  /**
+   * A required pointer argument was NULL.
+   */
+  InflectorStatus_NullArgument = 2,
+  /**
+   * The Rust code panicked (a bug); the panic was caught at the boundary.
+   */
+  InflectorStatus_Panic = 3,
+} InflectorStatus;
+
+/**
+ * An immutable set of acronyms (uppercased, at least two bytes long).
+ */
+typedef struct InflectorAcronyms InflectorAcronyms;
+
+#ifdef __cplusplus
 extern "C" {
-/**
- * Set acronyms from a comma-separated string. Tokens are uppercased.
- * Single-character tokens are silently ignored (minimum 2 chars).
- */
-void cruet_set_acronyms(const char *csv);
+#endif // __cplusplus
 
 /**
- * Get the current acronyms as a sorted comma-separated string.
- * Caller must free the returned string with `free_c_string`.
+ * Build an acronym set from a comma-separated list. Tokens are trimmed and
+ * uppercased; tokens shorter than two bytes are ignored.
+ * Returns NULL on invalid UTF-8 or internal error. Free with `inflector_acronyms_free`.
+ *
+ * # Safety
+ * Pointer arguments must be NULL or valid for the stated lengths.
  */
-char *cruet_get_acronyms(void);
+struct InflectorAcronyms *inflector_acronyms_new(const uint8_t *csv, uintptr_t len);
 
 /**
- * Clear all configured acronyms, restoring default behavior.
+ * Free an acronym set created by `inflector_acronyms_new`. NULL is a no-op.
+ *
+ * # Safety
+ * Pointer arguments must be NULL or valid for the stated lengths.
  */
-void cruet_clear_acronyms(void);
+void inflector_acronyms_free(struct InflectorAcronyms *acronyms);
 
 /**
- * Free a single C string returned by the transform functions
+ * Apply `op` to the UTF-8 string (`input`, `input_len`). `acronyms` may be NULL
+ * (no acronyms). On `Ok`, `*out_data`/`*out_len` receive a newly allocated
+ * buffer (not NUL-terminated) that must be released with `inflector_free_buffer`.
+ * On any other status nothing is allocated and the outputs are set to NULL/0.
+ *
+ * # Safety
+ * Pointer arguments must be NULL or valid for the stated lengths.
  */
-void free_c_string(char *s);
+enum InflectorStatus inflector_transform(enum InflectorOp op,
+                                         const uint8_t *input,
+                                         uintptr_t input_len,
+                                         const struct InflectorAcronyms *acronyms,
+                                         uint8_t **out_data,
+                                         uintptr_t *out_len);
 
-char *cruet_to_class_case(const char *s);
+/**
+ * Returns (in `*out`) whether applying `op` to the input leaves it unchanged,
+ * i.e. whether the input is already in the form `op` produces.
+ *
+ * # Safety
+ * Pointer arguments must be NULL or valid for the stated lengths.
+ */
+enum InflectorStatus inflector_predicate(enum InflectorOp op,
+                                         const uint8_t *input,
+                                         uintptr_t input_len,
+                                         const struct InflectorAcronyms *acronyms,
+                                         bool *out);
 
-char *cruet_to_camel_case(const char *s);
+/**
+ * Free a buffer returned by `inflector_transform`. NULL is a no-op.
+ *
+ * # Safety
+ * Pointer arguments must be NULL or valid for the stated lengths.
+ */
+void inflector_free_buffer(uint8_t *data, uintptr_t len);
 
-char *cruet_to_pascal_case(const char *s);
-
-char *cruet_to_screamingsnake_case(const char *s);
-
-char *cruet_to_snake_case(const char *s);
-
-char *cruet_to_kebab_case(const char *s);
-
-char *cruet_to_train_case(const char *s);
-
-char *cruet_to_sentence_case(const char *s);
-
-char *cruet_to_title_case(const char *s);
-
-char *cruet_to_upper_case(const char *s);
-
-char *cruet_to_lower_case(const char *s);
-
-char *cruet_to_table_case(const char *s);
-
-char *cruet_ordinalize(const char *s);
-
-char *cruet_deordinalize(const char *s);
-
-char *cruet_to_foreign_key(const char *s);
-
-char *cruet_demodulize(const char *s);
-
-char *cruet_deconstantize(const char *s);
-
-char *cruet_to_plural(const char *s);
-
-char *cruet_to_singular(const char *s);
-
-unsigned char cruet_is_class_case(const char *s);
-
-unsigned char cruet_is_camel_case(const char *s);
-
-unsigned char cruet_is_pascal_case(const char *s);
-
-unsigned char cruet_is_screamingsnake_case(const char *s);
-
-unsigned char cruet_is_snake_case(const char *s);
-
-unsigned char cruet_is_kebab_case(const char *s);
-
-unsigned char cruet_is_train_case(const char *s);
-
-unsigned char cruet_is_sentence_case(const char *s);
-
-unsigned char cruet_is_title_case(const char *s);
-
-unsigned char cruet_is_table_case(const char *s);
-
-unsigned char cruet_is_foreign_key(const char *s);
-}
+#ifdef __cplusplus
+}  // extern "C"
+#endif  // __cplusplus

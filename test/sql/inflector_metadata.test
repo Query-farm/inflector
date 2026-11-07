@@ -1,0 +1,38 @@
+# name: test/sql/inflector_metadata.test
+# description: every inflector function overload has a description, an example, categories and real parameter names
+# group: [sql]
+
+require inflector
+
+query I
+SELECT count(*) FROM duckdb_functions()
+WHERE extension_name = 'inflector'
+  AND (description IS NULL OR description = '' OR len(examples) = 0 OR len(categories) = 0);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT unnest(parameters) AS p FROM duckdb_functions() WHERE extension_name = 'inflector')
+WHERE regexp_matches(p, '^col[0-9]+$');
+----
+0
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE extension_name = 'inflector';
+----
+32
+
+query TT
+SELECT function_name, categories FROM duckdb_functions()
+WHERE function_name IN ('inflector_humanize', 'inflector_parameterize', 'inflector_classify')
+ORDER BY function_name;
+----
+inflector_classify	[text, naming]
+inflector_humanize	[text, inflection]
+inflector_parameterize	[text, naming]
+
+# The setting is documented as session scoped
+query T
+SELECT description LIKE '%Session scoped%' FROM duckdb_settings() WHERE name = 'inflector_acronyms';
+----
+true

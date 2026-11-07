@@ -1,0 +1,73 @@
+# name: test/sql/inflector_nulls.test
+# description: NULL handling for every scalar function, the inflect() overloads and the table function
+# group: [sql]
+
+require inflector
+
+statement ok
+CREATE TABLE words AS SELECT * FROM (VALUES (1, 'helloWorld'), (2, NULL), (3, 'foo_bar'), (4, NULL), (5, '')) t(id, w);
+
+# Every VARCHAR -> VARCHAR function returns NULL for NULL input (constant and per-row)
+query IIIIIIIIIII
+SELECT inflector_to_class_case(NULL), inflector_to_camel_case(NULL), inflector_to_pascal_case(NULL),
+       inflector_to_screamingsnake_case(NULL), inflector_to_snake_case(NULL), inflector_to_kebab_case(NULL),
+       inflector_to_train_case(NULL), inflector_to_sentence_case(NULL), inflector_to_title_case(NULL),
+       inflector_to_table_case(NULL), inflector_to_foreign_key(NULL);
+----
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+query IIIIIIIIII
+SELECT inflector_demodulize(NULL), inflector_deconstantize(NULL), inflector_ordinalize(NULL),
+       inflector_deordinalize(NULL), inflector_to_plural(NULL), inflector_to_singular(NULL),
+       inflector_humanize(NULL), inflector_parameterize(NULL), inflector_classify(NULL), inflect('snake', NULL);
+----
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+query IIIIIIIIIII
+SELECT inflector_is_class_case(NULL), inflector_is_camel_case(NULL), inflector_is_pascal_case(NULL),
+       inflector_is_screamingsnake_case(NULL), inflector_is_snake_case(NULL), inflector_is_kebab_case(NULL),
+       inflector_is_train_case(NULL), inflector_is_sentence_case(NULL), inflector_is_title_case(NULL),
+       inflector_is_table_case(NULL), inflector_is_foreign_key(NULL);
+----
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+# Non-constant columns with interleaved NULLs and an empty string
+query ITTTTT
+SELECT id, inflector_to_snake_case(w), inflector_to_camel_case(w), inflector_is_snake_case(w),
+       inflect('kebab', w), inflect('pascal', w, true)
+FROM words ORDER BY id;
+----
+1	hello_world	helloWorld	false	hello-world	HelloWorld
+2	NULL	NULL	NULL	NULL	NULL
+3	foo_bar	fooBar	true	foo-bar	FooBar
+4	NULL	NULL	NULL	NULL	NULL
+5	(empty)	(empty)	true	(empty)	(empty)
+
+# NULL format / strip_accents constants give NULL (standard NULL-in, NULL-out)
+query TTT
+SELECT inflect(NULL, 'x'), inflect('snake', 'x', NULL), inflect(NULL, {'a': 1});
+----
+NULL	NULL	NULL
+
+# NULL structs and NULL nested fields keep their validity after renaming
+query T
+SELECT inflect('snake', s) FROM (VALUES ({'fooBar': 1, 'innerValue': {'deepName': NULL}}), (NULL)) t(s);
+----
+{'foo_bar': 1, 'inner_value': {'deep_name': NULL}}
+NULL
+
+# Table function: NULL values pass through, NULL options are rejected
+query II
+SELECT * FROM inflect('snake', (SELECT NULL AS someValue, 1 AS otherValue));
+----
+NULL	1
+
+statement error
+SELECT * FROM inflect('snake', (SELECT 1 AS a), strip_accents := NULL);
+----
+strip_accents cannot be NULL
+
+statement error
+SELECT * FROM inflect(NULL, (SELECT 1 AS a));
+----
+format cannot be NULL
